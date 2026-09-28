@@ -13,11 +13,11 @@ A modular framework for constructing 4D spatiotemporal atlases of *C. elegans* e
   - Spatial alignment to consensus template.
   - Temporal alignment to canonical temporal atlas.
   - 5-modality trajectory scoring:
-    1. **Temporal Shape**: Autonomous cell cycle duration deviation ($Z_{\text{temp\_shape}}$).
-    2. **Temporal Shift**: Lineage-propagated midpoint phase drift ($Z_{\text{temp\_shift}}$).
-    3. **Spatial Shift**: Center-of-mass Mahalanobis misplacement ($D_{\text{spat\_shift}}$).
-    4. **Spatial Shape**: GP trajectory path residual RMSE ($D_{\text{spat\_shape}}$).
-    5. **Spatiotemporal Warp**: Fisher-Rao geodesic pacing distance ($Z_{\text{warp}}$).
+    1. **Temporal Shape**: Autonomous cell cycle duration deviation (*Z*<sub>temp_shape</sub>).
+    2. **Temporal Shift**: Lineage-propagated midpoint phase drift (*Z*<sub>temp_shift</sub>).
+    3. **Spatial Shift**: Center-of-mass Mahalanobis misplacement (*D*<sub>spat_shift</sub>).
+    4. **Spatial Shape**: GP trajectory path residual RMSE (*D*<sub>spat_shape</sub>).
+    5. **Spatiotemporal Warp**: Fisher-Rao geodesic pacing distance (*Z*<sub>warp</sub>).
   - Empirical p-values against WT null distribution and per-embryo Benjamini-Hochberg FDR control.
 - **Visualization Suite (`spatiotemporal_atlas.viz`)**:
   - Unified 5-panel Manhattan plots showing genome-wide anomaly significance per lineage clade.
