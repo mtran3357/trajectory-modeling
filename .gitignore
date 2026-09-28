@@ -1,0 +1,34 @@
+# Ignore all local analysis, scratchpads, and exploratory notebooks
+analysis/
+
+# Ignore all data directories
+data/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# macOS & IDE system files
+.DS_Store
+.idea/
+.vscode/
+
+# Model checkpoints & large arrays
+*.joblib
+*.pkl
+*.parquet
+models/
+loocv_output/
