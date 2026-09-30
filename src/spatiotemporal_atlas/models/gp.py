@@ -90,6 +90,9 @@ def extract_trajectory_ribbon(
     mu_srvf: np.ndarray,
     time_grid: np.ndarray,
     n_dense_samples: int = 100,
+    mu_rot_deg: float = 0.0,
+    std_rot_deg: float = 1.0,
+    template_curve: np.ndarray | None = None,
 ) -> TrajectoryRibbon:
     """Pre-evaluates GP trajectories into a lightweight 100-point ribbon object.
     
@@ -114,4 +117,8 @@ def extract_trajectory_ribbon(
         std_fr=float(std_fr),
         mu_srvf=mu_srvf.astype(np.float32),
         time_grid=time_grid.astype(np.float32),
+        mu_rot_deg=float(mu_rot_deg),
+        std_rot_deg=float(std_rot_deg),
+        template_curve=template_curve,
     )
+

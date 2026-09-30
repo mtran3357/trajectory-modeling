@@ -13,7 +13,9 @@ from ..temporal.lifespans import extract_cell_lifespans
 from ..temporal.register import register_embryo_to_temporal_atlas
 from ..stats.calibration import apply_empirical_calibration_to_inference
 from ..models.joint_gp import compute_3d_mahalanobis_residuals
+from ..geometry.curve_align import register_curve_to_template
 from ..types import ReferenceAtlas, TrajectoryRibbon
+
 
 
 def run_embryo_inference(
@@ -65,6 +67,8 @@ def run_embryo_inference(
     cell_models = bundle["cell_models"]
     oof_null_df = bundle["oof_null_df"]
     max_inlier_dist_um = bundle["max_inlier_dist_um"]
+    local_trajectory_alignment = bundle.get("local_trajectory_alignment", True)
+
 
     if max_inlier_dist_canon is None:
         max_inlier_dist_canon = bundle.get("max_inlier_dist_canon", 5.0)
@@ -198,8 +202,23 @@ def run_embryo_inference(
                 pred_cov_3d = interp1d(
                     grid_s, m_info["dense_cov_3d"], axis=0, kind="linear", fill_value="extrapolate"
                 )(s_obs)
+
+                if local_trajectory_alignment:
+                    target_curve = m_info.get("template_curve")
+                    if target_curve is None:
+                        target_curve = pred_mu_xyz
+                    R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
+                        s_obs=s_obs,
+                        coords_centered=xyz_shape,
+                        template_curve=target_curve,
+                        s_grid=time_grid,
+                    )
+                else:
+                    rot_angle_deg = 0.0
+                    xyz_eval = xyz_shape
+
                 d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(
-                    xyz_shape, pred_mu_xyz, pred_cov_3d
+                    xyz_eval, pred_mu_xyz, pred_cov_3d
                 )
             else:
                 delta2 = np.zeros(len(emb_cell_df))
@@ -208,16 +227,34 @@ def run_embryo_inference(
                 for idx_col, col_name in enumerate(aligned_cols):
                     grid_s = m_info["s_dense"]
                     ref_mu = m_info["dense_pred"][col_name]["mu"]
+                    pred_mu_xyz[:, idx_col] = interp1d(grid_s, ref_mu, kind="linear", fill_value="extrapolate")(s_obs)
+
+                if local_trajectory_alignment:
+                    target_curve = m_info.get("template_curve")
+                    if target_curve is None:
+                        target_curve = pred_mu_xyz
+                    R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
+                        s_obs=s_obs,
+                        coords_centered=xyz_shape,
+                        template_curve=target_curve,
+                        s_grid=time_grid,
+                    )
+                else:
+                    rot_angle_deg = 0.0
+                    xyz_eval = xyz_shape
+
+                for idx_col, col_name in enumerate(aligned_cols):
+                    grid_s = m_info["s_dense"]
                     ref_std = m_info["dense_pred"][col_name]["std"]
-
-                    m_gp = interp1d(grid_s, ref_mu, kind="linear", fill_value="extrapolate")(s_obs)
                     s_gp = interp1d(grid_s, ref_std, kind="linear", fill_value="extrapolate")(s_obs)
-
-                    pred_mu_xyz[:, idx_col] = m_gp
-                    delta2 += ((xyz_shape[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
+                    delta2 += ((xyz_eval[:, idx_col] - pred_mu_xyz[:, idx_col]) ** 2) / np.maximum(s_gp ** 2, 1e-4)
 
                 d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
-                rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_shape - pred_mu_xyz) ** 2, axis=1))))
+                rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_eval - pred_mu_xyz) ** 2, axis=1))))
+
+            mu_rot_ref = float(m_info.get("mu_rot_deg", 0.0))
+            std_rot_ref = float(m_info.get("std_rot_deg", 1.0))
+            z_rot_angle = float((rot_angle_deg - mu_rot_ref) / (std_rot_ref + 1e-6))
 
             # 5. Warp
             d_fr_test = max(calculate_fisher_rao_distance(gamma_test, time_grid), 1e-4)
@@ -241,6 +278,8 @@ def run_embryo_inference(
                 "delta_midpoint_min": delta_mid,
                 "d_spat_shift": d_spat_shift,
                 "com_shift_um": com_shift_um,
+                "rot_angle_deg": rot_angle_deg,
+                "z_rot_angle": z_rot_angle,
                 "d_spat_shape": d_spat_shape,
                 "rmse_3d_um": rmse_3d_um,
                 "d_warp_fr_rad": d_fr_test,
@@ -248,6 +287,7 @@ def run_embryo_inference(
                 "signed_warp_area": signed_warp_area,
                 "max_warp_dist": max_warp_dist,
             })
+
 
         if cell_records:
             emb_scored_df = pd.DataFrame(cell_records)

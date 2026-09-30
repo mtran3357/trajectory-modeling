@@ -60,6 +60,9 @@ class TrajectoryRibbon:
     dense_mu_3d: np.ndarray | None = None
     dense_cov_3d: np.ndarray | None = None
     B_cov: np.ndarray | None = None
+    mu_rot_deg: float = 0.0
+    std_rot_deg: float = 1.0
+    template_curve: np.ndarray | None = None
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -88,6 +91,8 @@ class TrajectoryRibbon:
             "std_fr": self.std_fr,
             "mu_srvf": self.mu_srvf,
             "time_grid": self.time_grid,
+            "mu_rot_deg": self.mu_rot_deg,
+            "std_rot_deg": self.std_rot_deg,
         }
         if self.dense_mu_3d is not None:
             d["dense_mu_3d"] = self.dense_mu_3d
@@ -95,6 +100,8 @@ class TrajectoryRibbon:
             d["dense_cov_3d"] = self.dense_cov_3d
         if self.B_cov is not None:
             d["B_cov"] = self.B_cov
+        if self.template_curve is not None:
+            d["template_curve"] = self.template_curve
         return d
 
     @classmethod
@@ -113,7 +120,11 @@ class TrajectoryRibbon:
             dense_mu_3d=d.get("dense_mu_3d"),
             dense_cov_3d=d.get("dense_cov_3d"),
             B_cov=d.get("B_cov"),
+            mu_rot_deg=float(d.get("mu_rot_deg", 0.0)),
+            std_rot_deg=float(d.get("std_rot_deg", 1.0)),
+            template_curve=d.get("template_curve"),
         )
+
 
 
 @dataclass

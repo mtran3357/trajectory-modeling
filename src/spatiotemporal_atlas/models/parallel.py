@@ -21,6 +21,11 @@ from .joint_gp import (
     compute_3d_mahalanobis_residuals,
     extract_joint_trajectory_ribbon,
 )
+from ..geometry.curve_align import (
+    generalized_procrustes_curves,
+    register_curve_to_template,
+)
+
 
 
 def _fit_and_score_single_cell_worker(
@@ -47,6 +52,7 @@ def _fit_and_score_single_cell_worker(
     return_models: bool,
     model_type: str = "joint_gp",
     n_dense_samples: int = 100,
+    local_trajectory_alignment: bool = True,
 ) -> tuple[list[dict], dict | None]:
     """Fits analytical GP + SRVF models for one blastomere and scores test tracks."""
     embs_present = set(sub_c[embryo_col].unique())
@@ -97,14 +103,33 @@ def _fit_and_score_single_cell_worker(
     xyz_shape_all = []
     train_fr_distances = []
 
+    # Map raw progression through SRVF time-warping
+    train_aligned_tracks = {}
     for i, (emb, data) in enumerate(train_tracks.items()):
         gamma_e = train_gammas[i]
         gamma_interp = interp1d(time_grid, gamma_e, kind="linear", fill_value="extrapolate")
         s_obs = np.clip(gamma_interp(data["t_rel"]), 0.0, 1.0)
-        s_warped_all.extend(s_obs)
-        xyz_shape_all.extend(data["xyz_shape"])
+        train_aligned_tracks[emb] = (s_obs, data["xyz_shape"])
         d_fr = max(calculate_fisher_rao_distance(gamma_e, time_grid), 1e-4)
         train_fr_distances.append(d_fr)
+
+    # Local trajectory rigid alignment (GPA)
+    if local_trajectory_alignment and len(train_aligned_tracks) >= 2:
+        gpa_res = generalized_procrustes_curves(train_aligned_tracks, s_grid=time_grid)
+        aligned_train_dict = gpa_res["aligned_trajectories"]
+        mu_rot_train = gpa_res["mean_angle_deg"]
+        std_rot_train = gpa_res["std_angle_deg"]
+        template_curve = gpa_res["template_curve"]
+    else:
+        aligned_train_dict = train_aligned_tracks
+        mu_rot_train = 0.0
+        std_rot_train = 1.0
+        template_curve = None
+
+    for emb in train_tracks.keys():
+        s_obs, coords_aligned = aligned_train_dict[emb]
+        s_warped_all.extend(s_obs)
+        xyz_shape_all.extend(coords_aligned)
 
     X_warped = np.array(s_warped_all).reshape(-1, 1)
     Y_shape = np.array(xyz_shape_all)
@@ -118,6 +143,7 @@ def _fit_and_score_single_cell_worker(
             noise_level=noise_level,
         )
         gps = None
+
     else:
         joint_model = None
         gps = fit_coordinate_gps(
@@ -208,7 +234,18 @@ def _fit_and_score_single_cell_worker(
 
         if model_type == "joint_gp" and joint_model is not None:
             pred_mu_xyz, _, cov_3d_test = predict_kronecker_joint_gp(joint_model, s_obs)
-            d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(xyz_shape, pred_mu_xyz, cov_3d_test)
+            if local_trajectory_alignment:
+                target_curve = template_curve if template_curve is not None else pred_mu_xyz
+                R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
+                    s_obs=s_obs,
+                    coords_centered=xyz_shape,
+                    template_curve=target_curve,
+                    s_grid=time_grid,
+                )
+            else:
+                rot_angle_deg = 0.0
+                xyz_eval = xyz_shape
+            d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(xyz_eval, pred_mu_xyz, cov_3d_test)
         else:
             delta2 = np.zeros(len(emb_df))
             pred_mu_xyz = np.zeros_like(xyz_shape)
@@ -216,10 +253,27 @@ def _fit_and_score_single_cell_worker(
             for idx_col, col_name in enumerate(spatial_cols):
                 m_gp, s_gp = gps[col_name].predict(s_obs_col, return_std=True)
                 pred_mu_xyz[:, idx_col] = m_gp
-                delta2 += ((xyz_shape[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
+
+            if local_trajectory_alignment:
+                target_curve = template_curve if template_curve is not None else pred_mu_xyz
+                R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
+                    s_obs=s_obs,
+                    coords_centered=xyz_shape,
+                    template_curve=target_curve,
+                    s_grid=time_grid,
+                )
+            else:
+                rot_angle_deg = 0.0
+                xyz_eval = xyz_shape
+
+            for idx_col, col_name in enumerate(spatial_cols):
+                m_gp, s_gp = gps[col_name].predict(s_obs_col, return_std=True)
+                delta2 += ((xyz_eval[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
 
             d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
-            rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_shape - pred_mu_xyz) ** 2, axis=1))))
+            rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_eval - pred_mu_xyz) ** 2, axis=1))))
+
+        z_rot_angle = float((rot_angle_deg - mu_rot_train) / (std_rot_train * factor_pred_1d))
 
         # 5. Warp
         d_fr_test = max(calculate_fisher_rao_distance(gamma_test, time_grid), 1e-4)
@@ -239,6 +293,8 @@ def _fit_and_score_single_cell_worker(
             "delta_midpoint_min": delta_mid,
             "d_spat_shift": d_spat_shift,
             "com_shift_um": com_shift_um,
+            "rot_angle_deg": rot_angle_deg,
+            "z_rot_angle": z_rot_angle,
             "d_spat_shape": d_spat_shape,
             "rmse_3d_um": rmse_3d_um,
             "d_warp_fr_rad": d_fr_test,
@@ -262,6 +318,9 @@ def _fit_and_score_single_cell_worker(
                 mu_srvf=mu_srvf,
                 time_grid=time_grid,
                 n_dense_samples=n_dense_samples,
+                mu_rot_deg=mu_rot_train,
+                std_rot_deg=std_rot_train,
+                template_curve=template_curve,
             )
         else:
             ribbon = extract_trajectory_ribbon(
@@ -275,8 +334,12 @@ def _fit_and_score_single_cell_worker(
                 mu_srvf=mu_srvf,
                 time_grid=time_grid,
                 n_dense_samples=n_dense_samples,
+                mu_rot_deg=mu_rot_train,
+                std_rot_deg=std_rot_train,
+                template_curve=template_curve,
             )
         lightweight_model = ribbon.to_dict()
+
 
     del gps, joint_model, X_warped, Y_shape, train_tracks
     return cell_records, lightweight_model
@@ -303,6 +366,7 @@ def score_embryos_batch_parallel(
     n_jobs: int = 4,
     desc: str = "Fitting Cells",
     max_inlier_dist_canon: float = 5.0,
+    local_trajectory_alignment: bool = True,
 ) -> tuple[pd.DataFrame, dict, dict]:
     """Coordinates parallel worker execution across blastomeres."""
     time_grid = np.linspace(0.0, 1.0, grid_points)
@@ -386,9 +450,11 @@ def score_embryos_batch_parallel(
             random_state=random_state,
             return_models=return_models,
             model_type=model_type,
+            local_trajectory_alignment=local_trajectory_alignment,
         )
         for c in unique_cells
     )
+
 
     worker_results = joblib.Parallel(
         n_jobs=n_jobs,

@@ -55,6 +55,7 @@ def test_end_to_end_pipeline():
     assert "temporal_atlas" in atlas_bundle
     assert "cell_models" in atlas_bundle
     assert "oof_null_df" in atlas_bundle
+    assert "emp_rot_angle" in atlas_bundle["oof_null_df"].columns
     assert len(atlas_bundle["cell_models"]) > 0
 
     # Test persistence (save and load)
@@ -80,11 +81,13 @@ def test_end_to_end_pipeline():
 
         expected_metric_cols = [
             "z_temp_shape", "z_temp_shift", "d_spat_shift", "d_spat_shape", "z_warp",
+            "rot_angle_deg", "z_rot_angle",
             "pval_temp_shape", "qval_temp_shape", "hit_temp_shape",
             "is_any_outlier", "n_outlier_modalities",
         ]
         for col in expected_metric_cols:
             assert col in cell_scores_df.columns, f"Missing expected column: {col}"
+
 
         qc_row = embryo_qc_df.iloc[0]
         assert "scale_s" in qc_row
