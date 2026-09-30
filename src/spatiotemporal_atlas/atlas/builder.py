@@ -15,7 +15,7 @@ def build_wt_reference_atlas(
     wt_pos_df: pd.DataFrame,
     lineage_df: pd.DataFrame,
     raw_spatial_cols: list[str] | tuple[str, ...] = ("x", "y", "z"),
-    voxel_size_xyz: list[float] | tuple[float, ...] = (0.0897, 0.0897, 0.8958),
+    voxel_size_xyz: list[float] | tuple[float, ...] = (0.09, 0.09, 1.0),
     time_col: str = "time",
     embryo_col: str = "series",
     cell_col: str = "cell",
@@ -23,6 +23,9 @@ def build_wt_reference_atlas(
     max_inlier_dist_canon: float = 5.0,
     n_null_splits: int = 5,
     n_jobs: int = 4,
+    model_type: str = "joint_gp",
+    length_scale: float = 0.3,
+    noise_level: float = 1.0,
     random_state: int = 42,
 ) -> dict:
     """Builds the complete WT reference atlas: consensus spatial template, 1D RANSAC
@@ -36,7 +39,7 @@ def build_wt_reference_atlas(
         Lineage tree defining parent-daughter relationships.
     raw_spatial_cols : list or tuple of str, default=('x', 'y', 'z')
         Column names of raw voxel coordinates.
-    voxel_size_xyz : list or tuple of float, default=(0.0897, 0.0897, 0.8958)
+    voxel_size_xyz : list or tuple of float, default=(0.09, 0.09, 1.0)
         Physical voxel pitch in microns (dx, dy, dz).
     time_col : str, default='time'
         Time/frame column.
@@ -138,6 +141,9 @@ def build_wt_reference_atlas(
             time_col=time_col,
             embryo_col=embryo_col,
             cell_col=cell_col,
+            model_type=model_type,
+            length_scale=length_scale,
+            noise_level=noise_level,
             optimizer=None,
             return_models=False,
             n_jobs=n_jobs,
@@ -174,6 +180,9 @@ def build_wt_reference_atlas(
         time_col=time_col,
         embryo_col=embryo_col,
         cell_col=cell_col,
+        model_type=model_type,
+        length_scale=length_scale,
+        noise_level=noise_level,
         optimizer=None,
         return_models=True,
         n_jobs=n_jobs,

@@ -25,10 +25,11 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+.agents/
 
 # Model checkpoints & large arrays
 *.joblib
 *.pkl
 *.parquet
-models/
-loocv_output/
+/models/
+/loocv_output/
