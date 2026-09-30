@@ -393,7 +393,7 @@ def score_embryos_batch_parallel(
     worker_results = joblib.Parallel(
         n_jobs=n_jobs,
         backend="loky",
-        batch_size=1,
+        batch_size="auto",
         max_nbytes=None,
     )(tqdm(tasks, total=len(unique_cells), desc=desc, leave=False, unit="cell"))
 
