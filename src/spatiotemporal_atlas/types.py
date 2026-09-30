@@ -57,6 +57,15 @@ class TrajectoryRibbon:
     std_fr: float
     mu_srvf: np.ndarray
     time_grid: np.ndarray
+    dense_mu_3d: np.ndarray | None = None
+    dense_cov_3d: np.ndarray | None = None
+    B_cov: np.ndarray | None = None
+
+    def __getitem__(self, item: str):
+        return getattr(self, item)
+
+    def get(self, item: str, default=None):
+        return getattr(self, item, default)
 
     def predict(self, s_obs: np.ndarray, cols: list[str]) -> tuple[np.ndarray, np.ndarray]:
         """Fast 1D linear interpolation of predicted mean and standard deviation along ribbon."""
@@ -69,7 +78,7 @@ class TrajectoryRibbon:
 
     def to_dict(self) -> dict:
         """Converts to dictionary representation for backward compatibility."""
-        return {
+        d = {
             "cell_name": self.cell_name,
             "s_dense": self.s_dense,
             "dense_pred": self.dense_pred,
@@ -80,6 +89,13 @@ class TrajectoryRibbon:
             "mu_srvf": self.mu_srvf,
             "time_grid": self.time_grid,
         }
+        if self.dense_mu_3d is not None:
+            d["dense_mu_3d"] = self.dense_mu_3d
+        if self.dense_cov_3d is not None:
+            d["dense_cov_3d"] = self.dense_cov_3d
+        if self.B_cov is not None:
+            d["B_cov"] = self.B_cov
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "TrajectoryRibbon":
@@ -94,6 +110,9 @@ class TrajectoryRibbon:
             std_fr=float(d["std_fr"]),
             mu_srvf=d["mu_srvf"],
             time_grid=d["time_grid"],
+            dense_mu_3d=d.get("dense_mu_3d"),
+            dense_cov_3d=d.get("dense_cov_3d"),
+            B_cov=d.get("B_cov"),
         )
 
 

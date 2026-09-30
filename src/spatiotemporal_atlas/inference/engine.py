@@ -12,6 +12,7 @@ from ..lineage.graph import parse_lineage_graph, get_ancestral_path_in_interval
 from ..temporal.lifespans import extract_cell_lifespans
 from ..temporal.register import register_embryo_to_temporal_atlas
 from ..stats.calibration import apply_empirical_calibration_to_inference
+from ..models.joint_gp import compute_3d_mahalanobis_residuals
 from ..types import ReferenceAtlas, TrajectoryRibbon
 
 
@@ -189,22 +190,34 @@ def run_embryo_inference(
             g_interp = interp1d(time_grid, gamma_test, kind="linear", fill_value="extrapolate")
             s_obs = np.clip(g_interp(t_rel), 0.0, 1.0)
 
-            delta2 = np.zeros(len(emb_cell_df))
-            pred_mu_xyz = np.zeros_like(xyz_shape)
-
-            for idx_col, col_name in enumerate(aligned_cols):
+            if m_info.get("dense_cov_3d") is not None and m_info.get("dense_mu_3d") is not None:
                 grid_s = m_info["s_dense"]
-                ref_mu = m_info["dense_pred"][col_name]["mu"]
-                ref_std = m_info["dense_pred"][col_name]["std"]
+                pred_mu_xyz = interp1d(
+                    grid_s, m_info["dense_mu_3d"], axis=0, kind="linear", fill_value="extrapolate"
+                )(s_obs)
+                pred_cov_3d = interp1d(
+                    grid_s, m_info["dense_cov_3d"], axis=0, kind="linear", fill_value="extrapolate"
+                )(s_obs)
+                d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(
+                    xyz_shape, pred_mu_xyz, pred_cov_3d
+                )
+            else:
+                delta2 = np.zeros(len(emb_cell_df))
+                pred_mu_xyz = np.zeros_like(xyz_shape)
 
-                m_gp = interp1d(grid_s, ref_mu, kind="linear", fill_value="extrapolate")(s_obs)
-                s_gp = interp1d(grid_s, ref_std, kind="linear", fill_value="extrapolate")(s_obs)
+                for idx_col, col_name in enumerate(aligned_cols):
+                    grid_s = m_info["s_dense"]
+                    ref_mu = m_info["dense_pred"][col_name]["mu"]
+                    ref_std = m_info["dense_pred"][col_name]["std"]
 
-                pred_mu_xyz[:, idx_col] = m_gp
-                delta2 += ((xyz_shape[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
+                    m_gp = interp1d(grid_s, ref_mu, kind="linear", fill_value="extrapolate")(s_obs)
+                    s_gp = interp1d(grid_s, ref_std, kind="linear", fill_value="extrapolate")(s_obs)
 
-            d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
-            rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_shape - pred_mu_xyz) ** 2, axis=1))))
+                    pred_mu_xyz[:, idx_col] = m_gp
+                    delta2 += ((xyz_shape[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
+
+                d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
+                rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_shape - pred_mu_xyz) ** 2, axis=1))))
 
             # 5. Warp
             d_fr_test = max(calculate_fisher_rao_distance(gamma_test, time_grid), 1e-4)

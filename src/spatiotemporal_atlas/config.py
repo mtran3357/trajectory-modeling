@@ -9,7 +9,7 @@ class ColumnConfig:
     raw_spatial_cols: tuple[str, str, str] = ("x", "y", "z")
     micron_cols: tuple[str, str, str] = ("x_um", "y_um", "z_um")
     aligned_cols: tuple[str, str, str] = ("x_aligned_um", "y_aligned_um", "z_aligned_um")
-    voxel_size_xyz: tuple[float, float, float] = (0.0897, 0.0897, 0.8958)
+    voxel_size_xyz: tuple[float, float, float] = (0.09, 0.09, 1.0)
     time_col: str = "time"
     embryo_col: str = "series"
     cell_col: str = "cell"
@@ -38,11 +38,16 @@ class TemporalConfig:
 @dataclass(frozen=True)
 class TrajectoryConfig:
     """Settings for SRVF curve alignment and analytical GP trajectory modeling."""
+    model_type: str = "joint_gp"
     grid_points: int = 40
     min_observations: int = 3
     min_train_embryos: int = 2
     length_scale: float = 0.3
-    noise_level: float = 0.1
+    noise_level: float = 1.0
+    length_scale_bounds: tuple[float, float] = (0.05, 3.0)
+    noise_level_bounds: tuple[float, float] = (1e-4, 1e2)
+    c_bounds: tuple[float, float] = (1e-3, 1e3)
+    n_restarts_optimizer: int = 10
     random_state: int = 42
     n_dense_samples: int = 100
     optimizer: str | None = None
