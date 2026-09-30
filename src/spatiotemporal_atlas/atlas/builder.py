@@ -27,7 +27,9 @@ def build_wt_reference_atlas(
     length_scale: float = 0.3,
     noise_level: float = 1.0,
     random_state: int = 42,
+    local_trajectory_alignment: bool = True,
 ) -> dict:
+
     """Builds the complete WT reference atlas: consensus spatial template, 1D RANSAC
     temporal atlas, pooled out-of-fold empirical nulls, and lightweight GP models.
     
@@ -149,6 +151,7 @@ def build_wt_reference_atlas(
             n_jobs=n_jobs,
             desc=f"Null Fold {fold_idx + 1}/{actual_splits}",
             max_inlier_dist_canon=max_inlier_dist_canon,
+            local_trajectory_alignment=local_trajectory_alignment,
         )
 
         if raw_val_df.empty:
@@ -161,6 +164,7 @@ def build_wt_reference_atlas(
                 "emp_temp_shape": abs(float(row["z_temp_shape"])),
                 "emp_temp_shift": abs(float(row["z_temp_shift"])),
                 "emp_spat_shift": float(row["d_spat_shift"]),
+                "emp_rot_angle": float(row.get("rot_angle_deg", 0.0)),
                 "emp_spat_shape": float(row["d_spat_shape"]),
                 "emp_warp": float(row["z_warp"]),
             })
@@ -188,6 +192,7 @@ def build_wt_reference_atlas(
         n_jobs=n_jobs,
         desc="Final Reference Fit",
         max_inlier_dist_canon=max_inlier_dist_canon,
+        local_trajectory_alignment=local_trajectory_alignment,
     )
 
     atlas_bundle = {
@@ -206,7 +211,9 @@ def build_wt_reference_atlas(
         "cell_col": cell_col,
         "max_inlier_dist_um": max_inlier_dist_um,
         "max_inlier_dist_canon": max_inlier_dist_canon,
+        "local_trajectory_alignment": local_trajectory_alignment,
     }
+
 
     print("=" * 80)
     print(f"ATLAS CONSTRUCTION COMPLETE ({len(final_cell_models)} blastomere models registered).")

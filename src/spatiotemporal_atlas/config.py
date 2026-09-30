@@ -51,6 +51,7 @@ class TrajectoryConfig:
     random_state: int = 42
     n_dense_samples: int = 100
     optimizer: str | None = None
+    local_trajectory_alignment: bool = True
 
 
 @dataclass(frozen=True)

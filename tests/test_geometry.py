@@ -90,3 +90,118 @@ def test_ransac_similarity_pose_with_outliers():
     assert np.sum(inliers[20:]) == 0
     assert np.isclose(s, s_true, atol=0.1)
     assert np.allclose(t, t_true, atol=0.5)
+
+
+def test_kabsch_curve_so3_identity():
+    """Verify kabsch_curve_so3 returns identity and 0 deg for identical curves."""
+    from spatiotemporal_atlas.geometry import kabsch_curve_so3
+    s = np.linspace(0, 1, 20)
+    P = np.column_stack([np.sin(s * np.pi), np.cos(s * np.pi), s])
+    P_centered = P - np.mean(P, axis=0)
+
+    R, theta = kabsch_curve_so3(P_centered, P_centered)
+    assert np.allclose(R, np.eye(3), atol=1e-6)
+    assert np.isclose(theta, 0.0, atol=1e-6)
+
+
+def test_kabsch_curve_so3_known_rotation():
+    """Verify kabsch_curve_so3 recovers exact rotation angle and matrix."""
+    from spatiotemporal_atlas.geometry import kabsch_curve_so3
+    s = np.linspace(0, 1, 20)
+    P = np.column_stack([s, np.sin(s * 2 * np.pi), np.cos(s * 2 * np.pi)])
+    P_centered = P - np.mean(P, axis=0)
+
+    # 45 deg rotation around Y axis
+    angle_rad = np.radians(45.0)
+    cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+    R_true = np.array([
+        [cos_a,  0.0, sin_a],
+        [0.0,    1.0, 0.0],
+        [-sin_a, 0.0, cos_a],
+    ])
+
+    Q_centered = (R_true @ P_centered.T).T
+    R_rec, theta_rec = kabsch_curve_so3(P_centered, Q_centered)
+
+    assert np.allclose(R_rec, R_true, atol=1e-5)
+    assert np.isclose(theta_rec, 45.0, atol=1e-4)
+
+
+def test_kabsch_curve_so3_no_reflection():
+    """Verify kabsch_curve_so3 enforces det(R) = +1 even when target is reflected."""
+    from spatiotemporal_atlas.geometry import kabsch_curve_so3
+    rng = np.random.default_rng(42)
+    P = rng.standard_normal((15, 3))
+    P_centered = P - np.mean(P, axis=0)
+
+    # Reflected target
+    Q_centered = P_centered.copy()
+    Q_centered[:, 2] = -Q_centered[:, 2]
+
+    R, theta = kabsch_curve_so3(P_centered, Q_centered, allow_reflection=False)
+    assert np.isclose(np.linalg.det(R), 1.0, atol=1e-5)
+
+
+def test_generalized_procrustes_curves():
+    """Verify GPA converges and produces consensus template curve."""
+    from spatiotemporal_atlas.geometry import generalized_procrustes_curves
+    s_grid = np.linspace(0, 1, 21)
+
+    # Base curve
+    base = np.column_stack([s_grid * 10, np.sin(s_grid * np.pi) * 3, np.cos(s_grid * np.pi) * 2])
+    base_centered = base - np.mean(base, axis=0)
+
+    # Generate 3 rotated versions
+    trajectories = {}
+    angles = [0.0, 15.0, -20.0]
+    for i, ang in enumerate(angles):
+        rad = np.radians(ang)
+        R_z = np.array([
+            [np.cos(rad), -np.sin(rad), 0],
+            [np.sin(rad),  np.cos(rad), 0],
+            [0,            0,           1],
+        ])
+        coords_rot = (R_z @ base_centered.T).T
+        trajectories[f"emb_{i}"] = (s_grid, coords_rot)
+
+    res = generalized_procrustes_curves(trajectories, s_grid=s_grid, max_iters=20)
+    assert "aligned_trajectories" in res
+    assert "template_curve" in res
+    assert "angles_deg" in res
+    assert len(res["aligned_trajectories"]) == 3
+    assert res["template_curve"].shape == (21, 3)
+    assert res["mean_angle_deg"] >= 0.0
+
+
+def test_register_curve_to_template():
+    """Verify register_curve_to_template aligns query to template."""
+    from spatiotemporal_atlas.geometry import register_curve_to_template
+    s_grid = np.linspace(0, 1, 21)
+    template = np.column_stack([s_grid * 5, np.sin(s_grid * np.pi) * 3, np.cos(s_grid * np.pi) * 2])
+    template_centered = template - np.mean(template, axis=0)
+
+    # Rotated query by 30 degrees around Z
+    rad = np.radians(30.0)
+    R_z = np.array([
+        [np.cos(rad), -np.sin(rad), 0],
+        [np.sin(rad),  np.cos(rad), 0],
+        [0,            0,           1],
+    ])
+    s_obs = np.linspace(0, 1, 15)
+    query_raw = np.column_stack([s_obs * 5, np.sin(s_obs * np.pi) * 3, np.cos(s_obs * np.pi) * 2])
+    query_centered = query_raw - np.mean(query_raw, axis=0)
+    query_rot = (R_z @ query_centered.T).T
+
+    R_test, theta_deg, coords_aligned = register_curve_to_template(
+        s_obs=s_obs,
+        coords_centered=query_rot,
+        template_curve=template_centered,
+        s_grid=s_grid,
+    )
+
+    assert np.isclose(theta_deg, 30.0, atol=0.5)
+    assert coords_aligned.shape == query_centered.shape
+    # After rotation, aligned coordinates should match query_centered
+    assert np.allclose(coords_aligned, query_centered, atol=0.2)
+
+

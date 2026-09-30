@@ -182,6 +182,9 @@ def extract_joint_trajectory_ribbon(
     mu_srvf: np.ndarray,
     time_grid: np.ndarray,
     n_dense_samples: int = 100,
+    mu_rot_deg: float = 0.0,
+    std_rot_deg: float = 1.0,
+    template_curve: np.ndarray | None = None,
 ) -> TrajectoryRibbon:
     """Pre-evaluates Kronecker joint GP into a lightweight 100-point ribbon object with 3D covariance.
     
@@ -212,4 +215,8 @@ def extract_joint_trajectory_ribbon(
         dense_mu_3d=mu_dense.astype(np.float32),
         dense_cov_3d=cov_3d_dense.astype(np.float32),
         B_cov=joint_model["B"].astype(np.float32),
+        mu_rot_deg=float(mu_rot_deg),
+        std_rot_deg=float(std_rot_deg),
+        template_curve=template_curve,
     )
+
