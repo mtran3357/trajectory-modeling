@@ -21,7 +21,7 @@ def plot_5metric_manhattan(
       B. Temporal Shift: Propagated Tree Phase Drift (-log10 p_temp_shift)
       C. Spatial Shift: Center-of-Mass Misplacement (-log10 p_spat_shift)
       D. Spatial Shape: GP Trajectory Path Residual (-log10 p_spat_shape)
-      E. Spatiotemporal Warp: Fisher-Rao Geodesic Pacing (-log10 p_warp)
+      E. Spatiotemporal Warp: Monotonic Pacing Distortion (-log10 p_warp)
       
     Parameters
     ----------
@@ -111,9 +111,9 @@ def plot_5metric_manhattan(
             "pval_warp",
             "qval_warp",
             "hit_warp",
-            "signed_warp_area",
-            r" $\Delta A_\gamma$",
-            r"E. Spatiotemporal Warp: Fisher-Rao Geodesic Pacing ($-\log_{10} p_{Z_{\mathrm{warp}}}$)",
+            "rms_warp_min" if "rms_warp_min" in plot_df.columns else "signed_warp_area",
+            r" min RMS" if "rms_warp_min" in plot_df.columns else r" $\Delta A_\gamma$",
+            r"E. Spatiotemporal Warp: Monotonic Pacing Distortion ($-\log_{10} p_{\mathrm{warp}}$)",
         ),
     ]
 

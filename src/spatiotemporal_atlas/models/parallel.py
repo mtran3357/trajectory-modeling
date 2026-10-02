@@ -1,15 +1,16 @@
-"""Cell-wise parallel Gaussian Process and SRVF trajectory fitting and scoring."""
+"""Cell-wise parallel Gaussian Process and Regularized Time-Warping trajectory fitting and scoring."""
 
 import joblib
 import numpy as np
 import pandas as pd
-from scipy.interpolate import interp1d
 from tqdm.auto import tqdm
 
-from ..functional.srvf import curve_to_srvf
-from ..functional.dp_warp import align_srvf_dp_clamped
-from ..functional.karcher_mean import compute_karcher_mean_srvf
-from ..functional.metrics import calculate_fisher_rao_distance
+from ..functional.time_warp import regularized_monotonic_time_warp, compute_warp_metrics
+from ..geometry.curve_align import (
+    interpolate_curve_to_grid,
+    masked_generalized_procrustes,
+    register_curve_to_template,
+)
 from ..lineage.graph import parse_lineage_graph, get_ancestral_path_in_interval
 from ..temporal.lifespans import extract_cell_lifespans
 from ..temporal.atlas import build_canonical_temporal_atlas
@@ -21,11 +22,6 @@ from .joint_gp import (
     compute_3d_mahalanobis_residuals,
     extract_joint_trajectory_ribbon,
 )
-from ..geometry.curve_align import (
-    generalized_procrustes_curves,
-    register_curve_to_template,
-)
-
 
 
 def _fit_and_score_single_cell_worker(
@@ -42,7 +38,8 @@ def _fit_and_score_single_cell_worker(
     time_col: str,
     embryo_col: str,
     cell_col: str,
-    time_grid: np.ndarray,
+    grid_points: int,
+    tau_cutoff: float,
     min_observations: int,
     min_train_embryos: int,
     optimizer: str | None,
@@ -53,8 +50,10 @@ def _fit_and_score_single_cell_worker(
     model_type: str = "joint_gp",
     n_dense_samples: int = 100,
     local_trajectory_alignment: bool = True,
+    warping_lambda: float = 10.0,
+    warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
 ) -> tuple[list[dict], dict | None]:
-    """Fits analytical GP + SRVF models for one blastomere and scores test tracks."""
+    """Fits analytical GP + regularized time-warping models for one blastomere and scores test tracks."""
     embs_present = set(sub_c[embryo_col].unique())
     train_embs = [
         e for e in training_embryos
@@ -67,71 +66,73 @@ def _fit_and_score_single_cell_worker(
     train_tracks = {}
     for emb in train_embs:
         emb_df = sub_c[sub_c[embryo_col] == emb].sort_values(time_col)
-        if len(emb_df) < min_observations:
+        t_vals = emb_df[time_col].values.astype(float)
+        t_birth = float(t_vals.min())
+        tau_vals = t_vals - t_birth
+        valid_mask = tau_vals <= tau_cutoff + 1e-4
+        if np.sum(valid_mask) < min_observations:
             continue
 
-        t_vals = emb_df[time_col].values.astype(float)
-        t_min, t_max = t_vals.min(), t_vals.max()
-        t_rel = (t_vals - t_min) / (t_max - t_min) if t_max > t_min else np.zeros_like(t_vals)
-
-        xyz = emb_df[spatial_cols].values.astype(float)
+        tau_obs = tau_vals[valid_mask]
+        xyz = emb_df[spatial_cols].values.astype(float)[valid_mask]
         com = np.mean(xyz, axis=0)
         xyz_shape = xyz - com
 
-        curve_interp = interp1d(t_rel, xyz_shape, axis=0, kind="linear", fill_value="extrapolate")
-        dense_curve = curve_interp(time_grid)
-        srvf = curve_to_srvf(dense_curve, time_grid)
-
         train_tracks[emb] = {
-            "t_rel": t_rel,
+            "tau_obs": tau_obs,
             "xyz_shape": xyz_shape,
             "com_xyz": com,
-            "srvf": srvf,
-            "n_frames": len(emb_df),
+            "t_birth": t_birth,
+            "n_frames": len(tau_obs),
         }
 
     if len(train_tracks) < min_train_embryos:
         return [], None
 
-    train_srvfs = [v["srvf"] for v in train_tracks.values()]
     train_coms = np.array([v["com_xyz"] for v in train_tracks.values()])
-    M_train = len(train_srvfs)
+    M_train = len(train_tracks)
 
-    mu_srvf, train_gammas = compute_karcher_mean_srvf(train_srvfs, time_grid)
+    # Evaluation nodes in physical minutes [0, tau_cutoff]
+    tau_grid = np.linspace(0.0, tau_cutoff, grid_points)
 
-    s_warped_all = []
-    xyz_shape_all = []
-    train_fr_distances = []
-
-    # Map raw progression through SRVF time-warping
-    train_aligned_tracks = {}
-    for i, (emb, data) in enumerate(train_tracks.items()):
-        gamma_e = train_gammas[i]
-        gamma_interp = interp1d(time_grid, gamma_e, kind="linear", fill_value="extrapolate")
-        s_obs = np.clip(gamma_interp(data["t_rel"]), 0.0, 1.0)
-        train_aligned_tracks[emb] = (s_obs, data["xyz_shape"])
-        d_fr = max(calculate_fisher_rao_distance(gamma_e, time_grid), 1e-4)
-        train_fr_distances.append(d_fr)
-
-    # Local trajectory rigid alignment (GPA)
-    if local_trajectory_alignment and len(train_aligned_tracks) >= 2:
-        gpa_res = generalized_procrustes_curves(train_aligned_tracks, s_grid=time_grid)
+    # Local trajectory rigid alignment (Masked GPA)
+    tracks_dict = {emb: (data["tau_obs"], data["xyz_shape"]) for emb, data in train_tracks.items()}
+    if local_trajectory_alignment and len(tracks_dict) >= 2:
+        gpa_res = masked_generalized_procrustes(tracks_dict, tau_grid=tau_grid)
         aligned_train_dict = gpa_res["aligned_trajectories"]
         mu_rot_train = gpa_res["mean_angle_deg"]
         std_rot_train = gpa_res["std_angle_deg"]
         template_curve = gpa_res["template_curve"]
     else:
-        aligned_train_dict = train_aligned_tracks
+        aligned_train_dict = tracks_dict
         mu_rot_train = 0.0
         std_rot_train = 1.0
-        template_curve = None
+        res_list = [interpolate_curve_to_grid(d["tau_obs"], d["xyz_shape"], tau_grid) for d in train_tracks.values()]
+        template_curve = np.mean(res_list, axis=0)
 
-    for emb in train_tracks.keys():
-        s_obs, coords_aligned = aligned_train_dict[emb]
-        s_warped_all.extend(s_obs)
-        xyz_shape_all.extend(coords_aligned)
+    # Regularized monotonic time-warping in rotated physical space
+    u_warped_all = []
+    xyz_shape_all = []
+    train_warp_rms = []
 
-    X_warped = np.array(s_warped_all).reshape(-1, 1)
+    for emb, data in train_tracks.items():
+        tau_obs, coords_aligned = aligned_train_dict[emb]
+        gamma_e, rms_w, _ = regularized_monotonic_time_warp(
+            tau_obs=tau_obs,
+            coords_aligned=coords_aligned,
+            template_curve=template_curve,
+            tau_grid=tau_grid,
+            lambda_reg=warping_lambda,
+            slope_bounds=warping_slope_bounds,
+        )
+        train_warp_rms.append(rms_w)
+        # Normalize time coordinate by tau_cutoff for GP modeling: u in [0, 1]
+        u_obs = np.clip(gamma_e / max(tau_cutoff, 1e-3), 0.0, 1.0)
+        c_warped = np.column_stack([np.interp(gamma_e, tau_obs, coords_aligned[:, d]) for d in range(3)])
+        u_warped_all.extend(u_obs)
+        xyz_shape_all.extend(c_warped)
+
+    X_warped = np.array(u_warped_all).reshape(-1, 1)
     Y_shape = np.array(xyz_shape_all)
 
     # Fit trajectory model: Joint 3D Kronecker GP (default) or Independent 1D GPs
@@ -143,7 +144,6 @@ def _fit_and_score_single_cell_worker(
             noise_level=noise_level,
         )
         gps = None
-
     else:
         joint_model = None
         gps = fit_coordinate_gps(
@@ -166,8 +166,8 @@ def _fit_and_score_single_cell_worker(
         cov_com = np.eye(3) * 0.25
 
     inv_cov_com = np.linalg.pinv(cov_com)
-    mu_fr = float(np.mean(train_fr_distances))
-    std_fr = float(np.std(train_fr_distances, ddof=1)) if M_train > 1 else 0.05
+    mu_warp = float(np.mean(train_warp_rms)) if train_warp_rms else 0.0
+    std_warp = float(np.std(train_warp_rms, ddof=1)) if len(train_warp_rms) > 1 else 0.1
 
     factor_pred = 1.0 + (1.0 / M_train)
     factor_pred_1d = np.sqrt(factor_pred)
@@ -179,26 +179,23 @@ def _fit_and_score_single_cell_worker(
     for te_id in test_embryo_ids:
         if te_id not in canon_test_by_embryo:
             continue
-        canon_te_df = canon_test_by_embryo[te_id]
-        te_cell_row = canon_te_df[canon_te_df[cell_col] == c]
+        canon_test_df = canon_test_by_embryo[te_id]
+        te_cell_row = canon_test_df[canon_test_df[cell_col] == c]
         if te_cell_row.empty:
             continue
 
         emb_df = sub_c[sub_c[embryo_col] == te_id].sort_values(time_col)
-        if len(emb_df) < min_observations:
+        t_vals = emb_df[time_col].values.astype(float)
+        t_birth = float(t_vals.min())
+        tau_vals = t_vals - t_birth
+        valid_mask = tau_vals <= tau_cutoff + 1e-4
+        if np.sum(valid_mask) < min_observations:
             continue
 
-        t_vals = emb_df[time_col].values.astype(float)
-        t_min, t_max = t_vals.min(), t_vals.max()
-        t_rel = (t_vals - t_min) / (t_max - t_min) if t_max > t_min else np.zeros_like(t_vals)
-
-        xyz = emb_df[spatial_cols].values.astype(float)
-        com = np.mean(xyz, axis=0)
-        xyz_shape = xyz - com
-
-        curve_interp = interp1d(t_rel, xyz_shape, axis=0, kind="linear", fill_value="extrapolate")
-        dense_curve = curve_interp(time_grid)
-        srvf = curve_to_srvf(dense_curve, time_grid)
+        tau_test = tau_vals[valid_mask]
+        xyz_test = emb_df[spatial_cols].values.astype(float)[valid_mask]
+        com_test = np.mean(xyz_test, axis=0)
+        xyz_shape_test = xyz_test - com_test
 
         # 1. Temporal Shape
         log_dur_obs = float(te_cell_row["canon_log_dur"].iloc[0])
@@ -206,7 +203,7 @@ def _fit_and_score_single_cell_worker(
         delta_dur_min = float(te_cell_row["canon_duration"].iloc[0] - t_stat["mu_phys"])
         pct_dur_dev = float((np.exp(log_dur_obs - t_stat["mu_log"]) - 1.0) * 100.0)
 
-        # 2. Temporal Shift
+        # 2. Temporal Shift (Midpoint and Birth)
         local_root, path_ancestors = get_ancestral_path_in_interval(
             c, parent_map, set(temporal_atlas.keys())
         )
@@ -221,65 +218,65 @@ def _fit_and_score_single_cell_worker(
         delta_mid = float(obs_mid - e_mid_path)
         z_temp_shift = float(delta_mid / total_std_shift) if total_std_shift > 0 else 0.0
 
+        mu_birth_can = float(root_stat["mu_birth"] + sum(ancestor_mus))
+        canon_birth_obs = float(te_cell_row["canon_birth"].iloc[0]) if "canon_birth" in te_cell_row.columns else t_birth
+        delta_birth_min = float(canon_birth_obs - mu_birth_can)
+
         # 3. Spatial Shift
-        diff_com = com - mu_com
+        diff_com = com_test - mu_com
         d2_shift_raw = float(diff_com.T @ inv_cov_com @ diff_com)
         d_spat_shift = float(np.sqrt(max(d2_shift_raw / factor_pred, 0.0)))
         com_shift_um = float(np.linalg.norm(diff_com))
 
-        # 4. Spatial Shape
-        gamma_test = align_srvf_dp_clamped(mu_srvf, srvf, time_grid)
-        g_interp = interp1d(time_grid, gamma_test, kind="linear", fill_value="extrapolate")
-        s_obs = np.clip(g_interp(t_rel), 0.0, 1.0)
+        # 4. Spatial Rotation
+        if local_trajectory_alignment and template_curve is not None:
+            R_test, rot_angle_deg, coords_aligned = register_curve_to_template(
+                s_obs=tau_test,
+                coords_centered=xyz_shape_test,
+                template_curve=template_curve,
+                s_grid=tau_grid,
+            )
+        else:
+            R_test = np.eye(3)
+            rot_angle_deg = 0.0
+            coords_aligned = xyz_shape_test
+
+        z_rot_angle = float((rot_angle_deg - mu_rot_train) / (std_rot_train * factor_pred_1d))
+
+        # 5. Regularized Monotonic Time Warping in Rotated Physical Space
+        target_curve = template_curve if template_curve is not None else np.zeros((len(tau_grid), 3))
+        gamma_test, rms_warp_min, slopes_test = regularized_monotonic_time_warp(
+            tau_obs=tau_test,
+            coords_aligned=coords_aligned,
+            template_curve=target_curve,
+            tau_grid=tau_grid,
+            lambda_reg=warping_lambda,
+            slope_bounds=warping_slope_bounds,
+        )
+        active_tau_test = tau_grid[tau_grid <= tau_test.max() + 1e-4]
+        warp_met = compute_warp_metrics(gamma_test, active_tau_test, slopes_test)
+        max_warp_min = warp_met["max_warp_min"]
+        signed_warp_area = warp_met["signed_warp_area"]
+        z_warp = float((rms_warp_min - mu_warp) / (std_warp * np.sqrt(factor_pred)))
+
+        # 6. Spatial Shape Residuals in Warped Progression Coordinates
+        u_eval = np.clip(gamma_test / max(tau_cutoff, 1e-3), 0.0, 1.0)
+        xyz_eval = np.column_stack([np.interp(gamma_test, tau_test, coords_aligned[:, d]) for d in range(3)])
 
         if model_type == "joint_gp" and joint_model is not None:
-            pred_mu_xyz, _, cov_3d_test = predict_kronecker_joint_gp(joint_model, s_obs)
-            if local_trajectory_alignment:
-                target_curve = template_curve if template_curve is not None else pred_mu_xyz
-                R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
-                    s_obs=s_obs,
-                    coords_centered=xyz_shape,
-                    template_curve=target_curve,
-                    s_grid=time_grid,
-                )
-            else:
-                rot_angle_deg = 0.0
-                xyz_eval = xyz_shape
+            pred_mu_xyz, _, cov_3d_test = predict_kronecker_joint_gp(joint_model, u_eval)
             d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(xyz_eval, pred_mu_xyz, cov_3d_test)
         else:
-            delta2 = np.zeros(len(emb_df))
-            pred_mu_xyz = np.zeros_like(xyz_shape)
-            s_obs_col = s_obs.reshape(-1, 1)
+            delta2 = np.zeros(len(u_eval))
+            pred_mu_xyz = np.zeros_like(xyz_eval)
+            u_eval_col = u_eval.reshape(-1, 1)
             for idx_col, col_name in enumerate(spatial_cols):
-                m_gp, s_gp = gps[col_name].predict(s_obs_col, return_std=True)
+                m_gp, s_gp = gps[col_name].predict(u_eval_col, return_std=True)
                 pred_mu_xyz[:, idx_col] = m_gp
-
-            if local_trajectory_alignment:
-                target_curve = template_curve if template_curve is not None else pred_mu_xyz
-                R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
-                    s_obs=s_obs,
-                    coords_centered=xyz_shape,
-                    template_curve=target_curve,
-                    s_grid=time_grid,
-                )
-            else:
-                rot_angle_deg = 0.0
-                xyz_eval = xyz_shape
-
-            for idx_col, col_name in enumerate(spatial_cols):
-                m_gp, s_gp = gps[col_name].predict(s_obs_col, return_std=True)
                 delta2 += ((xyz_eval[:, idx_col] - m_gp) ** 2) / np.maximum(s_gp ** 2, 1e-4)
 
             d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
             rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_eval - pred_mu_xyz) ** 2, axis=1))))
-
-        z_rot_angle = float((rot_angle_deg - mu_rot_train) / (std_rot_train * factor_pred_1d))
-
-        # 5. Warp
-        d_fr_test = max(calculate_fisher_rao_distance(gamma_test, time_grid), 1e-4)
-        z_warp = float((d_fr_test - mu_fr) / (std_fr * np.sqrt(factor_pred)))
-        signed_warp_area = float(np.trapezoid(gamma_test - time_grid, time_grid))
-        max_warp_dist = float(np.max(np.abs(gamma_test - time_grid)))
 
         cell_records.append({
             embryo_col: te_id,
@@ -291,16 +288,20 @@ def _fit_and_score_single_cell_worker(
             "canon_mid": obs_mid,
             "z_temp_shift": z_temp_shift,
             "delta_midpoint_min": delta_mid,
+            "delta_birth_min": delta_birth_min,
             "d_spat_shift": d_spat_shift,
             "com_shift_um": com_shift_um,
             "rot_angle_deg": rot_angle_deg,
             "z_rot_angle": z_rot_angle,
             "d_spat_shape": d_spat_shape,
             "rmse_3d_um": rmse_3d_um,
-            "d_warp_fr_rad": d_fr_test,
+            "d_warp_fr_rad": rms_warp_min,
+            "rms_warp_min": rms_warp_min,
             "z_warp": z_warp,
             "signed_warp_area": signed_warp_area,
-            "max_warp_dist": max_warp_dist,
+            "max_warp_dist": max_warp_min,
+            "max_warp_min": max_warp_min,
+            "tau_cutoff": tau_cutoff,
         })
 
     # STRIP MEMORY: Pre-evaluate ribbons and discard internal GP objects before returning
@@ -313,14 +314,17 @@ def _fit_and_score_single_cell_worker(
                 spatial_cols=spatial_cols,
                 mu_com=mu_com,
                 inv_cov_com=inv_cov_com,
-                mu_fr=mu_fr,
-                std_fr=std_fr,
-                mu_srvf=mu_srvf,
-                time_grid=time_grid,
+                mu_fr=0.0,
+                std_fr=1.0,
+                mu_srvf=np.zeros((1, 3)),
+                time_grid=tau_grid,
                 n_dense_samples=n_dense_samples,
                 mu_rot_deg=mu_rot_train,
                 std_rot_deg=std_rot_train,
                 template_curve=template_curve,
+                tau_cutoff=tau_cutoff,
+                mu_warp_min=mu_warp,
+                std_warp_min=std_warp,
             )
         else:
             ribbon = extract_trajectory_ribbon(
@@ -329,17 +333,19 @@ def _fit_and_score_single_cell_worker(
                 spatial_cols=spatial_cols,
                 mu_com=mu_com,
                 inv_cov_com=inv_cov_com,
-                mu_fr=mu_fr,
-                std_fr=std_fr,
-                mu_srvf=mu_srvf,
-                time_grid=time_grid,
+                mu_fr=0.0,
+                std_fr=1.0,
+                mu_srvf=np.zeros((1, 3)),
+                time_grid=tau_grid,
                 n_dense_samples=n_dense_samples,
                 mu_rot_deg=mu_rot_train,
                 std_rot_deg=std_rot_train,
                 template_curve=template_curve,
+                tau_cutoff=tau_cutoff,
+                mu_warp_min=mu_warp,
+                std_warp_min=std_warp,
             )
         lightweight_model = ribbon.to_dict()
-
 
     del gps, joint_model, X_warped, Y_shape, train_tracks
     return cell_records, lightweight_model
@@ -367,9 +373,11 @@ def score_embryos_batch_parallel(
     desc: str = "Fitting Cells",
     max_inlier_dist_canon: float = 5.0,
     local_trajectory_alignment: bool = True,
+    warping_lambda: float = 10.0,
+    warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
+    tau_percentile_cutoff: float = 95.0,
 ) -> tuple[pd.DataFrame, dict, dict]:
     """Coordinates parallel worker execution across blastomeres."""
-    time_grid = np.linspace(0.0, 1.0, grid_points)
     parent_map = parse_lineage_graph(lineage_df)
 
     pos_work = pos_df.copy()
@@ -399,6 +407,23 @@ def score_embryos_batch_parallel(
     )
     if canon_train_df.empty or not temporal_atlas:
         return pd.DataFrame(), {}, {}
+
+    # Calculate empirical tau_cutoff (95th percentile) per cell type from WT training cohort
+    tau_cutoffs = {}
+    for cell_name, grp in train_cycles.groupby(cell_col):
+        durs = grp["duration"].dropna().values.astype(float)
+        if len(durs) >= 5:
+            cutoff = float(np.percentile(durs, tau_percentile_cutoff))
+        elif len(durs) > 0:
+            cutoff = float(np.max(durs))
+        else:
+            cutoff = 30.0
+        tau_cutoffs[cell_name] = max(cutoff, 1.0)
+
+    for cell_name in temporal_atlas.keys():
+        if cell_name not in tau_cutoffs:
+            tau_cutoffs[cell_name] = max(float(temporal_atlas[cell_name].get("mu_phys", 30.0)), 1.0)
+        temporal_atlas[cell_name]["tau_cutoff"] = tau_cutoffs[cell_name]
 
     pooled_log_stds = [v["std_log"] for v in temporal_atlas.values() if v["std_log"] > 0]
     sigma_log_pool = float(np.median(pooled_log_stds)) if pooled_log_stds else 0.05
@@ -441,7 +466,8 @@ def score_embryos_batch_parallel(
             time_col=time_col,
             embryo_col=embryo_col,
             cell_col=cell_col,
-            time_grid=time_grid,
+            grid_points=grid_points,
+            tau_cutoff=tau_cutoffs.get(c, 30.0),
             min_observations=min_observations,
             min_train_embryos=min_train_embryos,
             optimizer=optimizer,
@@ -451,10 +477,11 @@ def score_embryos_batch_parallel(
             return_models=return_models,
             model_type=model_type,
             local_trajectory_alignment=local_trajectory_alignment,
+            warping_lambda=warping_lambda,
+            warping_slope_bounds=warping_slope_bounds,
         )
         for c in unique_cells
     )
-
 
     worker_results = joblib.Parallel(
         n_jobs=n_jobs,
@@ -478,5 +505,9 @@ def score_embryos_batch_parallel(
     return (
         raw_test_df,
         fitted_models,
-        {"temporal_atlas": temporal_atlas, "reg_meta_by_test": reg_meta_by_test},
+        {
+            "temporal_atlas": temporal_atlas,
+            "reg_meta_by_test": reg_meta_by_test,
+            "tau_cutoffs": tau_cutoffs,
+        },
     )

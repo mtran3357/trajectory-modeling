@@ -28,6 +28,9 @@ def build_wt_reference_atlas(
     noise_level: float = 1.0,
     random_state: int = 42,
     local_trajectory_alignment: bool = True,
+    warping_lambda: float = 10.0,
+    warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
+    tau_percentile_cutoff: float = 95.0,
 ) -> dict:
 
     """Builds the complete WT reference atlas: consensus spatial template, 1D RANSAC
@@ -152,6 +155,9 @@ def build_wt_reference_atlas(
             desc=f"Null Fold {fold_idx + 1}/{actual_splits}",
             max_inlier_dist_canon=max_inlier_dist_canon,
             local_trajectory_alignment=local_trajectory_alignment,
+            warping_lambda=warping_lambda,
+            warping_slope_bounds=warping_slope_bounds,
+            tau_percentile_cutoff=tau_percentile_cutoff,
         )
 
         if raw_val_df.empty:
@@ -166,7 +172,8 @@ def build_wt_reference_atlas(
                 "emp_spat_shift": float(row["d_spat_shift"]),
                 "emp_rot_angle": float(row.get("rot_angle_deg", 0.0)),
                 "emp_spat_shape": float(row["d_spat_shape"]),
-                "emp_warp": float(row["z_warp"]),
+                "emp_warp": float(row.get("rms_warp_min", row.get("z_warp", 0.0))),
+                "emp_delta_birth": float(row.get("delta_birth_min", 0.0)),
             })
 
     oof_null_df = pd.DataFrame(null_records)
@@ -193,6 +200,9 @@ def build_wt_reference_atlas(
         desc="Final Reference Fit",
         max_inlier_dist_canon=max_inlier_dist_canon,
         local_trajectory_alignment=local_trajectory_alignment,
+        warping_lambda=warping_lambda,
+        warping_slope_bounds=warping_slope_bounds,
+        tau_percentile_cutoff=tau_percentile_cutoff,
     )
 
     atlas_bundle = {
@@ -202,6 +212,7 @@ def build_wt_reference_atlas(
         "cell_models": final_cell_models,
         "oof_null_df": oof_null_df,
         "wt_spatial_reg_meta": wt_spatial_reg_meta,
+        "tau_cutoffs": atlas_meta.get("tau_cutoffs", {}),
         "voxel_size_xyz": list(voxel_size_xyz),
         "raw_spatial_cols": list(raw_spatial_cols),
         "aligned_cols": aligned_cols,
@@ -212,6 +223,9 @@ def build_wt_reference_atlas(
         "max_inlier_dist_um": max_inlier_dist_um,
         "max_inlier_dist_canon": max_inlier_dist_canon,
         "local_trajectory_alignment": local_trajectory_alignment,
+        "warping_lambda": warping_lambda,
+        "warping_slope_bounds": list(warping_slope_bounds),
+        "tau_percentile_cutoff": tau_percentile_cutoff,
     }
 
 

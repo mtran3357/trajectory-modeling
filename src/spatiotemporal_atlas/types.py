@@ -63,6 +63,9 @@ class TrajectoryRibbon:
     mu_rot_deg: float = 0.0
     std_rot_deg: float = 1.0
     template_curve: np.ndarray | None = None
+    tau_cutoff: float = 0.0
+    mu_warp_min: float = 0.0
+    std_warp_min: float = 1.0
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -93,6 +96,9 @@ class TrajectoryRibbon:
             "time_grid": self.time_grid,
             "mu_rot_deg": self.mu_rot_deg,
             "std_rot_deg": self.std_rot_deg,
+            "tau_cutoff": self.tau_cutoff,
+            "mu_warp_min": self.mu_warp_min,
+            "std_warp_min": self.std_warp_min,
         }
         if self.dense_mu_3d is not None:
             d["dense_mu_3d"] = self.dense_mu_3d
@@ -113,9 +119,9 @@ class TrajectoryRibbon:
             dense_pred=d["dense_pred"],
             mu_com=d["mu_com"],
             inv_cov_com=d["inv_cov_com"],
-            mu_fr=float(d["mu_fr"]),
-            std_fr=float(d["std_fr"]),
-            mu_srvf=d["mu_srvf"],
+            mu_fr=float(d.get("mu_fr", 0.0)),
+            std_fr=float(d.get("std_fr", 1.0)),
+            mu_srvf=d.get("mu_srvf", np.zeros((1, 3))),
             time_grid=d["time_grid"],
             dense_mu_3d=d.get("dense_mu_3d"),
             dense_cov_3d=d.get("dense_cov_3d"),
@@ -123,6 +129,9 @@ class TrajectoryRibbon:
             mu_rot_deg=float(d.get("mu_rot_deg", 0.0)),
             std_rot_deg=float(d.get("std_rot_deg", 1.0)),
             template_curve=d.get("template_curve"),
+            tau_cutoff=float(d.get("tau_cutoff", 0.0)),
+            mu_warp_min=float(d.get("mu_warp_min", 0.0)),
+            std_warp_min=float(d.get("std_warp_min", 1.0)),
         )
 
 
@@ -137,6 +146,7 @@ class ReferenceAtlas:
     oof_null_df: pd.DataFrame
     wt_spatial_reg_meta: dict[str, dict]
     config: dict
+    tau_cutoffs: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serializes bundle into dictionary compatible with prototype atlas_bundle."""
@@ -150,6 +160,7 @@ class ReferenceAtlas:
             },
             "oof_null_df": self.oof_null_df,
             "wt_spatial_reg_meta": self.wt_spatial_reg_meta,
+            "tau_cutoffs": self.tau_cutoffs,
             **self.config,
         }
 
@@ -158,7 +169,8 @@ class ReferenceAtlas:
         """Reconstructs ReferenceAtlas from dictionary."""
         config_keys = [
             "voxel_size_xyz", "raw_spatial_cols", "aligned_cols", "micron_cols",
-            "time_col", "embryo_col", "cell_col", "max_inlier_dist_um", "max_inlier_dist_canon"
+            "time_col", "embryo_col", "cell_col", "max_inlier_dist_um", "max_inlier_dist_canon",
+            "local_trajectory_alignment", "warping_lambda", "warping_slope_bounds", "tau_percentile_cutoff"
         ]
         config = {k: d[k] for k in config_keys if k in d}
         cell_models = {}
@@ -176,4 +188,5 @@ class ReferenceAtlas:
             oof_null_df=d["oof_null_df"],
             wt_spatial_reg_meta=d.get("wt_spatial_reg_meta", {}),
             config=config,
+            tau_cutoffs=d.get("tau_cutoffs", {}),
         )

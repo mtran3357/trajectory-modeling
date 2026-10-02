@@ -8,6 +8,7 @@ from .curve_align import (
     kabsch_curve_so3,
     interpolate_curve_to_grid,
     generalized_procrustes_curves,
+    masked_generalized_procrustes,
     register_curve_to_template,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "kabsch_curve_so3",
     "interpolate_curve_to_grid",
     "generalized_procrustes_curves",
+    "masked_generalized_procrustes",
     "register_curve_to_template",
 ]
 

@@ -205,3 +205,79 @@ def test_register_curve_to_template():
     assert np.allclose(coords_aligned, query_centered, atol=0.2)
 
 
+def test_masked_generalized_procrustes():
+    """Verify masked GPA converges with variable-lifespan trajectories."""
+    from spatiotemporal_atlas.geometry import masked_generalized_procrustes
+    tau_grid = np.linspace(0.0, 30.0, 31)
+
+    # Base curve: spiral trajectory in physical minutes
+    base_fn = lambda t: np.column_stack([t * 0.8, np.sin(t * 0.2) * 4.0, np.cos(t * 0.2) * 3.0])
+
+    # 3 embryos with different lifespans: 20 min, 25 min, 30 min
+    trajectories = {}
+    durations = [20.0, 25.0, 30.0]
+    angles = [0.0, 20.0, -15.0]
+
+    for i, (dur, ang) in enumerate(zip(durations, angles)):
+        t_obs = np.linspace(0.0, dur, int(dur) + 1)
+        coords = base_fn(t_obs)
+        coords_centered = coords - np.mean(coords, axis=0)
+
+        rad = np.radians(ang)
+        R_z = np.array([
+            [np.cos(rad), -np.sin(rad), 0.0],
+            [np.sin(rad),  np.cos(rad), 0.0],
+            [0.0,          0.0,         1.0],
+        ])
+        coords_rot = (R_z @ coords_centered.T).T
+        trajectories[f"emb_{i}"] = (t_obs, coords_rot)
+
+    res = masked_generalized_procrustes(trajectories, tau_grid=tau_grid, max_iters=25)
+
+    assert "aligned_trajectories" in res
+    assert "template_curve" in res
+    assert "angles_deg" in res
+    assert len(res["aligned_trajectories"]) == 3
+    assert res["template_curve"].shape == (31, 3)
+    assert res["mean_angle_deg"] >= 0.0
+    for emb_id in trajectories:
+        assert emb_id in res["aligned_trajectories"]
+        orig_tau, _ = trajectories[emb_id]
+        aligned_tau, aligned_coords = res["aligned_trajectories"][emb_id]
+        assert aligned_coords.shape == (len(orig_tau), 3)
+
+
+def test_register_curve_to_template_with_mask():
+    """Verify register_curve_to_template correctly masks active nodes when query duration < grid."""
+    from spatiotemporal_atlas.geometry import register_curve_to_template
+    tau_grid = np.linspace(0.0, 30.0, 31)
+    template = np.column_stack([tau_grid * 0.5, np.sin(tau_grid * 0.3) * 3.0, np.cos(tau_grid * 0.3) * 2.0])
+    template_centered = template - np.mean(template, axis=0)
+
+    # Query trajectory only observed up to 18.0 min (shorter than 30.0 min template)
+    tau_obs = np.linspace(0.0, 18.0, 19)
+    query_raw = np.column_stack([tau_obs * 0.5, np.sin(tau_obs * 0.3) * 3.0, np.cos(tau_obs * 0.3) * 2.0])
+    query_centered = query_raw - np.mean(query_raw, axis=0)
+
+    # Rotate query by 25 degrees around Z axis
+    rad = np.radians(25.0)
+    R_z = np.array([
+        [np.cos(rad), -np.sin(rad), 0.0],
+        [np.sin(rad),  np.cos(rad), 0.0],
+        [0.0,          0.0,         1.0],
+    ])
+    query_rot = (R_z @ query_centered.T).T
+
+    R_test, theta_deg, coords_aligned = register_curve_to_template(
+        s_obs=tau_obs,
+        coords_centered=query_rot,
+        template_curve=template_centered,
+        s_grid=tau_grid,
+    )
+
+    assert np.isclose(theta_deg, 25.0, atol=0.5)
+    assert coords_aligned.shape == query_centered.shape
+    assert np.allclose(coords_aligned, query_centered, atol=0.2)
+
+
+
