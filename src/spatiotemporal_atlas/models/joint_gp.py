@@ -185,6 +185,9 @@ def extract_joint_trajectory_ribbon(
     mu_rot_deg: float = 0.0,
     std_rot_deg: float = 1.0,
     template_curve: np.ndarray | None = None,
+    tau_cutoff: float = 0.0,
+    mu_warp_min: float = 0.0,
+    std_warp_min: float = 1.0,
 ) -> TrajectoryRibbon:
     """Pre-evaluates Kronecker joint GP into a lightweight 100-point ribbon object with 3D covariance.
     
@@ -218,5 +221,8 @@ def extract_joint_trajectory_ribbon(
         mu_rot_deg=float(mu_rot_deg),
         std_rot_deg=float(std_rot_deg),
         template_curve=template_curve,
+        tau_cutoff=float(tau_cutoff),
+        mu_warp_min=float(mu_warp_min),
+        std_warp_min=float(std_warp_min),
     )
 

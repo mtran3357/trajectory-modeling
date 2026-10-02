@@ -12,6 +12,8 @@ import seaborn as sns
 
 from ..functional.srvf import curve_to_srvf
 from ..functional.dp_warp import align_srvf_dp_clamped
+from ..functional.time_warp import regularized_monotonic_time_warp
+from ..geometry.curve_align import register_curve_to_template
 from ..geometry.align import align_embryo_to_spatial_template
 from ..types import ReferenceAtlas
 from .colors import get_canonical_clade_color
@@ -152,7 +154,38 @@ def plot_warping_velocity_dual_lineage(
             for c in valid_cells:
                 if c in cell_models:
                     model_dict = cell_models[c].to_dict() if hasattr(cell_models[c], "to_dict") else cell_models[c]
-                    if "mu_srvf" in model_dict:
+                    template_curve = model_dict.get("template_curve")
+                    if template_curve is not None:
+                        tau_grid = np.asarray(model_dict.get("time_grid", time_grid), dtype=float)
+                        tau_cutoff = float(model_dict.get("tau_cutoff", tau_grid[-1] if len(tau_grid) > 0 else 30.0))
+                        c_sub = emb_pos[emb_pos[cell_key] == c].sort_values(t_key)
+                        if len(c_sub) >= 3:
+                            t_vals = c_sub[t_key].values.astype(float)
+                            t_birth = float(t_vals.min())
+                            tau_vals = t_vals - t_birth
+                            valid_mask = tau_vals <= tau_cutoff + 1e-4
+                            if np.sum(valid_mask) >= 3:
+                                tau_test = tau_vals[valid_mask]
+                                xyz = c_sub[aligned_cols].values.astype(float)[valid_mask]
+                                xyz_shape = xyz - np.mean(xyz, axis=0)
+                                _, _, coords_aligned = register_curve_to_template(
+                                    s_obs=tau_test,
+                                    coords_centered=xyz_shape,
+                                    template_curve=template_curve,
+                                    s_grid=tau_grid,
+                                )
+                                gamma_test, _, _ = regularized_monotonic_time_warp(
+                                    tau_obs=tau_test,
+                                    coords_aligned=coords_aligned,
+                                    template_curve=template_curve,
+                                    tau_grid=tau_grid,
+                                    lambda_reg=float(bundle.get("warping_lambda", 10.0)) if bundle else 10.0,
+                                )
+                                active_tau = tau_grid[tau_grid <= tau_test.max() + 1e-4]
+                                g_dot = np.maximum(np.gradient(gamma_test, active_tau), 0.0)
+                                t_norm_grid = (active_tau - active_tau[0]) / max(active_tau[-1] - active_tau[0], 1e-4)
+                                computed_gamma_dots[c] = (t_norm_grid, g_dot)
+                    elif "mu_srvf" in model_dict and np.sum(np.abs(model_dict["mu_srvf"])) > 0:
                         c_sub = emb_pos[emb_pos[cell_key] == c].sort_values(t_key)
                         if len(c_sub) >= 3:
                             t_vals = c_sub[t_key].values.astype(float)

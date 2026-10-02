@@ -92,7 +92,7 @@ def apply_empirical_calibration_to_inference(
         elif metric == "spat_shape":
             test_score = out["d_spat_shape"].to_numpy(dtype=float)
         else:
-            test_score = out["z_warp"].to_numpy(dtype=float)
+            test_score = out["rms_warp_min"].to_numpy(dtype=float) if "rms_warp_min" in out.columns else out["z_warp"].to_numpy(dtype=float)
 
         # Empirical p-values and per-embryo BH FDR
         out[p_col] = [calc_emp_pval(v, ref, two_sided=two_sided) for v in test_score]

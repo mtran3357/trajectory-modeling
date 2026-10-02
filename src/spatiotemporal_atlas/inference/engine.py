@@ -5,9 +5,7 @@ import pandas as pd
 from scipy.interpolate import interp1d
 
 from ..geometry.align import align_embryo_to_spatial_template
-from ..functional.srvf import curve_to_srvf
-from ..functional.dp_warp import align_srvf_dp_clamped
-from ..functional.metrics import calculate_fisher_rao_distance
+from ..functional.time_warp import regularized_monotonic_time_warp, compute_warp_metrics
 from ..lineage.graph import parse_lineage_graph, get_ancestral_path_in_interval
 from ..temporal.lifespans import extract_cell_lifespans
 from ..temporal.register import register_embryo_to_temporal_atlas
@@ -68,6 +66,9 @@ def run_embryo_inference(
     oof_null_df = bundle["oof_null_df"]
     max_inlier_dist_um = bundle["max_inlier_dist_um"]
     local_trajectory_alignment = bundle.get("local_trajectory_alignment", True)
+    warping_lambda = float(bundle.get("warping_lambda", 10.0))
+    warping_slope_bounds = tuple(bundle.get("warping_slope_bounds", (0.5, 2.0)))
+    tau_cutoffs = bundle.get("tau_cutoffs", {})
 
 
     if max_inlier_dist_canon is None:
@@ -144,23 +145,23 @@ def run_embryo_inference(
 
             m_info = cell_models[c_name]
             t_stat = temporal_atlas[c_name]
-            time_grid = m_info["time_grid"]
+            tau_grid = m_info["time_grid"]
+            tau_cutoff = float(m_info.get("tau_cutoff", tau_cutoffs.get(c_name, tau_grid[-1] if len(tau_grid) > 0 else 30.0)))
+            if tau_cutoff <= 0:
+                tau_cutoff = tau_grid[-1] if len(tau_grid) > 0 else 30.0
 
             emb_cell_df = aligned_q[aligned_q[cell_col] == c_name].sort_values(time_col)
-            if len(emb_cell_df) < min_observations:
+            t_vals = emb_cell_df[time_col].values.astype(float)
+            t_birth = float(t_vals.min())
+            tau_vals = t_vals - t_birth
+            valid_mask = tau_vals <= tau_cutoff + 1e-4
+            if np.sum(valid_mask) < min_observations:
                 continue
 
-            t_vals = emb_cell_df[time_col].values.astype(float)
-            t_min, t_max = t_vals.min(), t_vals.max()
-            t_rel = (t_vals - t_min) / (t_max - t_min) if t_max > t_min else np.zeros_like(t_vals)
-
-            xyz = emb_cell_df[aligned_cols].values.astype(float)
+            tau_test = tau_vals[valid_mask]
+            xyz = emb_cell_df[aligned_cols].values.astype(float)[valid_mask]
             com = np.mean(xyz, axis=0)
             xyz_shape = xyz - com
-
-            curve_interp = interp1d(t_rel, xyz_shape, axis=0, kind="linear", fill_value="extrapolate")
-            dense_curve = curve_interp(time_grid)
-            srvf = curve_to_srvf(dense_curve, time_grid)
 
             # 1. Temporal Shape
             log_dur_obs = float(c_row["canon_log_dur"])
@@ -168,7 +169,7 @@ def run_embryo_inference(
             delta_dur_min = float(c_row["canon_duration"] - t_stat["mu_phys"])
             pct_dur_dev = float((np.exp(log_dur_obs - t_stat["mu_log"]) - 1.0) * 100.0)
 
-            # 2. Temporal Shift
+            # 2. Temporal Shift (Midpoint and Birth)
             local_root, path_ancestors = get_ancestral_path_in_interval(
                 c_name, parent_map, set(temporal_atlas.keys())
             )
@@ -183,84 +184,82 @@ def run_embryo_inference(
             delta_mid = float(obs_mid - e_mid_path)
             z_temp_shift = float(delta_mid / total_std_shift) if total_std_shift > 0 else 0.0
 
+            mu_birth_can = float(root_stat["mu_birth"] + sum(ancestor_mus))
+            canon_birth_obs = float(c_row["canon_birth"]) if "canon_birth" in c_row else t_birth
+            delta_birth_min = float(canon_birth_obs - mu_birth_can)
+
             # 3. Spatial Shift
             diff_com = com - m_info["mu_com"]
             d2_shift_raw = float(diff_com.T @ m_info["inv_cov_com"] @ diff_com)
             d_spat_shift = float(np.sqrt(max(d2_shift_raw, 0.0)))
             com_shift_um = float(np.linalg.norm(diff_com))
 
-            # 4. Spatial Shape (Interpolated from precomputed ribbon)
-            gamma_test = align_srvf_dp_clamped(m_info["mu_srvf"], srvf, time_grid)
-            g_interp = interp1d(time_grid, gamma_test, kind="linear", fill_value="extrapolate")
-            s_obs = np.clip(g_interp(t_rel), 0.0, 1.0)
-
-            if m_info.get("dense_cov_3d") is not None and m_info.get("dense_mu_3d") is not None:
-                grid_s = m_info["s_dense"]
-                pred_mu_xyz = interp1d(
-                    grid_s, m_info["dense_mu_3d"], axis=0, kind="linear", fill_value="extrapolate"
-                )(s_obs)
-                pred_cov_3d = interp1d(
-                    grid_s, m_info["dense_cov_3d"], axis=0, kind="linear", fill_value="extrapolate"
-                )(s_obs)
-
-                if local_trajectory_alignment:
-                    target_curve = m_info.get("template_curve")
-                    if target_curve is None:
-                        target_curve = pred_mu_xyz
-                    R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
-                        s_obs=s_obs,
-                        coords_centered=xyz_shape,
-                        template_curve=target_curve,
-                        s_grid=time_grid,
-                    )
-                else:
-                    rot_angle_deg = 0.0
-                    xyz_eval = xyz_shape
-
-                d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(
-                    xyz_eval, pred_mu_xyz, pred_cov_3d
+            # 4. Spatial Rotation (SO(3) alignment to consensus template)
+            template_curve = m_info.get("template_curve")
+            if local_trajectory_alignment and template_curve is not None:
+                R_test, rot_angle_deg, coords_aligned = register_curve_to_template(
+                    s_obs=tau_test,
+                    coords_centered=xyz_shape,
+                    template_curve=template_curve,
+                    s_grid=tau_grid,
                 )
             else:
-                delta2 = np.zeros(len(emb_cell_df))
-                pred_mu_xyz = np.zeros_like(xyz_shape)
-
-                for idx_col, col_name in enumerate(aligned_cols):
-                    grid_s = m_info["s_dense"]
-                    ref_mu = m_info["dense_pred"][col_name]["mu"]
-                    pred_mu_xyz[:, idx_col] = interp1d(grid_s, ref_mu, kind="linear", fill_value="extrapolate")(s_obs)
-
-                if local_trajectory_alignment:
-                    target_curve = m_info.get("template_curve")
-                    if target_curve is None:
-                        target_curve = pred_mu_xyz
-                    R_test, rot_angle_deg, xyz_eval = register_curve_to_template(
-                        s_obs=s_obs,
-                        coords_centered=xyz_shape,
-                        template_curve=target_curve,
-                        s_grid=time_grid,
-                    )
-                else:
-                    rot_angle_deg = 0.0
-                    xyz_eval = xyz_shape
-
-                for idx_col, col_name in enumerate(aligned_cols):
-                    grid_s = m_info["s_dense"]
-                    ref_std = m_info["dense_pred"][col_name]["std"]
-                    s_gp = interp1d(grid_s, ref_std, kind="linear", fill_value="extrapolate")(s_obs)
-                    delta2 += ((xyz_eval[:, idx_col] - pred_mu_xyz[:, idx_col]) ** 2) / np.maximum(s_gp ** 2, 1e-4)
-
-                d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
-                rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_eval - pred_mu_xyz) ** 2, axis=1))))
+                rot_angle_deg = 0.0
+                coords_aligned = xyz_shape
 
             mu_rot_ref = float(m_info.get("mu_rot_deg", 0.0))
             std_rot_ref = float(m_info.get("std_rot_deg", 1.0))
             z_rot_angle = float((rot_angle_deg - mu_rot_ref) / (std_rot_ref + 1e-6))
 
-            # 5. Warp
-            d_fr_test = max(calculate_fisher_rao_distance(gamma_test, time_grid), 1e-4)
-            z_warp = float((d_fr_test - m_info["mu_fr"]) / (m_info["std_fr"] + 1e-6))
-            signed_warp_area = float(np.trapezoid(gamma_test - time_grid, time_grid))
-            max_warp_dist = float(np.max(np.abs(gamma_test - time_grid)))
+            # 5. Regularized Monotonic Time Warping in Rotated Physical Space
+            target_curve = template_curve if template_curve is not None else np.zeros((len(tau_grid), 3))
+            gamma_test, rms_warp_min, slopes_test = regularized_monotonic_time_warp(
+                tau_obs=tau_test,
+                coords_aligned=coords_aligned,
+                template_curve=target_curve,
+                tau_grid=tau_grid,
+                lambda_reg=warping_lambda,
+                slope_bounds=warping_slope_bounds,
+            )
+            active_tau_test = tau_grid[tau_grid <= tau_test.max() + 1e-4]
+            warp_met = compute_warp_metrics(gamma_test, active_tau_test, slopes_test)
+            max_warp_min = warp_met["max_warp_min"]
+            signed_warp_area = warp_met["signed_warp_area"]
+
+            mu_warp_ref = float(m_info.get("mu_warp_min", m_info.get("mu_fr", 0.0)))
+            std_warp_ref = float(m_info.get("std_warp_min", m_info.get("std_fr", 1.0)))
+            z_warp = float((rms_warp_min - mu_warp_ref) / (std_warp_ref + 1e-6))
+
+            # 6. Spatial Shape Residuals in Warped Progression Coordinates
+            u_eval = np.clip(gamma_test / max(tau_cutoff, 1e-3), 0.0, 1.0)
+            xyz_eval = np.column_stack([np.interp(gamma_test, tau_test, coords_aligned[:, d]) for d in range(3)])
+
+            if m_info.get("dense_cov_3d") is not None and m_info.get("dense_mu_3d") is not None:
+                grid_u = m_info["s_dense"]
+                pred_mu_xyz = interp1d(
+                    grid_u, m_info["dense_mu_3d"], axis=0, kind="linear", fill_value="extrapolate"
+                )(u_eval)
+                pred_cov_3d = interp1d(
+                    grid_u, m_info["dense_cov_3d"], axis=0, kind="linear", fill_value="extrapolate"
+                )(u_eval)
+
+                d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(
+                    xyz_eval, pred_mu_xyz, pred_cov_3d
+                )
+            else:
+                delta2 = np.zeros(len(u_eval))
+                pred_mu_xyz = np.zeros_like(xyz_eval)
+                grid_u = m_info["s_dense"]
+
+                for idx_col, col_name in enumerate(aligned_cols):
+                    ref_mu = m_info["dense_pred"][col_name]["mu"]
+                    pred_mu_xyz[:, idx_col] = interp1d(grid_u, ref_mu, kind="linear", fill_value="extrapolate")(u_eval)
+                    ref_std = m_info["dense_pred"][col_name]["std"]
+                    s_gp = interp1d(grid_u, ref_std, kind="linear", fill_value="extrapolate")(u_eval)
+                    delta2 += ((xyz_eval[:, idx_col] - pred_mu_xyz[:, idx_col]) ** 2) / np.maximum(s_gp ** 2, 1e-4)
+
+                d_spat_shape = float(np.sqrt(np.mean(delta2 / 3.0)))
+                rmse_3d_um = float(np.sqrt(np.mean(np.sum((xyz_eval - pred_mu_xyz) ** 2, axis=1))))
 
             cell_records.append({
                 "embryo_id": q_id,
@@ -276,16 +275,20 @@ def run_embryo_inference(
                 "canon_mid": obs_mid,
                 "z_temp_shift": z_temp_shift,
                 "delta_midpoint_min": delta_mid,
+                "delta_birth_min": delta_birth_min,
                 "d_spat_shift": d_spat_shift,
                 "com_shift_um": com_shift_um,
                 "rot_angle_deg": rot_angle_deg,
                 "z_rot_angle": z_rot_angle,
                 "d_spat_shape": d_spat_shape,
                 "rmse_3d_um": rmse_3d_um,
-                "d_warp_fr_rad": d_fr_test,
+                "d_warp_fr_rad": rms_warp_min,
+                "rms_warp_min": rms_warp_min,
                 "z_warp": z_warp,
                 "signed_warp_area": signed_warp_area,
-                "max_warp_dist": max_warp_dist,
+                "max_warp_dist": max_warp_min,
+                "max_warp_min": max_warp_min,
+                "tau_cutoff": tau_cutoff,
             })
 
 
