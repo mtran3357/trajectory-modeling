@@ -493,7 +493,7 @@ def plot_warping_velocity_dual_lineage(
         Line2D([0], [0], color="#2ecc71", lw=4.0, label="Reference: E clade"),
         Line2D([0], [0], color="#9467bd", lw=4.0, label="Reference: C clade"),
         Line2D([0], [0], color="#8c564b", lw=4.0, label="Reference: D clade"),
-        Line2D([0], [0], color="#e377c2", lw=4.0, label="Reference: Germline / P4 clade"),
+        Line2D([0], [0], color="#e377c2", lw=4.0, label="Reference: Germline / P lineage"),
         Line2D([0], [0], marker="_", color="#000000", mew=1.4, ms=8, label=r"Reference timing ($\pm1\sigma$)"),
         Line2D([0], [0], color="#b0bec5", lw=4.0, label=r"Observed: colored by $\dot{\gamma}(t)$"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="#e74c3c", markeredgecolor="#ffffff", ms=7, label="Empirical temporal-shift / warp outlier"),
