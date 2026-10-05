@@ -33,7 +33,7 @@ def test_calc_emp_pval_limits():
 
 
 def test_apply_empirical_calibration():
-    """Verify empirical calibration and FDR hit calling across 5 modalities."""
+    """Verify empirical calibration and FDR hit calling across 6 modalities."""
     test_df = pd.DataFrame([{
         "cell": "ABa",
         "z_temp_shape": 4.5,
@@ -41,6 +41,8 @@ def test_apply_empirical_calibration():
         "d_spat_shift": 5.0,
         "d_spat_shape": 0.5,
         "z_warp": 0.1,
+        "rot_angle_deg": 45.0,
+        "z_rot_angle": 3.5,
     }])
     null_df = pd.DataFrame({
         "emp_temp_shape": [0.1, 0.5, 1.0, 1.2],
@@ -48,15 +50,21 @@ def test_apply_empirical_calibration():
         "emp_spat_shift": [0.2, 0.4, 0.6, 0.8],
         "emp_spat_shape": [0.1, 0.2, 0.3, 0.4],
         "emp_warp": [0.1, 0.2, 0.3, 0.4],
+        "emp_rot_angle": [1.0, 2.0, 3.0, 4.0],
         "null_embryo_id": ["E1", "E2", "E3", "E4"],
     })
 
     cal_df, meta = apply_empirical_calibration_to_inference(test_df, null_df, alpha=0.25)
 
-    assert "pval_temp_shape" in cal_df.columns
-    assert "qval_temp_shape" in cal_df.columns
-    assert "hit_temp_shape" in cal_df.columns
+    for mod in ["temp_shape", "temp_shift", "warp", "spat_shift", "spat_rot", "spat_shape"]:
+        assert f"pval_{mod}" in cal_df.columns
+        assert f"qval_{mod}" in cal_df.columns
+        assert f"hit_{mod}" in cal_df.columns
+
     assert "n_outlier_modalities" in cal_df.columns
-    # Outlier count should be > 0 because temp_shape and spat_shift are extreme
+    # Outlier count should be > 0 because temp_shape, spat_shift, and spat_rot are extreme
     assert cal_df["n_outlier_modalities"].iloc[0] > 0
+    assert cal_df["n_outlier_modalities"].iloc[0] <= 6
     assert cal_df["is_any_outlier"].iloc[0] is True or cal_df["is_any_outlier"].iloc[0] == 1
+    assert bool(cal_df["hit_spat_rot"].iloc[0]) is True
+

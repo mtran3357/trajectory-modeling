@@ -86,10 +86,18 @@ def test_end_to_end_pipeline():
             "rot_angle_deg", "z_rot_angle",
             "rms_warp_min", "delta_birth_min", "tau_cutoff",
             "pval_temp_shape", "qval_temp_shape", "hit_temp_shape",
+            "pval_temp_shift", "qval_temp_shift", "hit_temp_shift",
+            "pval_warp", "qval_warp", "hit_warp",
+            "pval_spat_shift", "qval_spat_shift", "hit_spat_shift",
+            "pval_spat_rot", "qval_spat_rot", "hit_spat_rot",
+            "pval_spat_shape", "qval_spat_shape", "hit_spat_shape",
             "is_any_outlier", "n_outlier_modalities",
         ]
         for col in expected_metric_cols:
             assert col in cell_scores_df.columns, f"Missing expected column: {col}"
+
+        assert (cell_scores_df["n_outlier_modalities"] >= 0).all()
+        assert (cell_scores_df["n_outlier_modalities"] <= 6).all()
 
 
         qc_row = embryo_qc_df.iloc[0]

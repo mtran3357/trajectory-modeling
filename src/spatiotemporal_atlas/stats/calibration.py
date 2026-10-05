@@ -37,14 +37,17 @@ def apply_empirical_calibration_to_inference(
     oof_null_df: pd.DataFrame,
     alpha: float = 0.05,
 ) -> tuple[pd.DataFrame, dict]:
-    """Scores 5 trajectory modalities against pooled WT OOF null and computes per-embryo BH-FDR.
+    """Scores 6 trajectory modalities against pooled WT OOF null and computes per-embryo BH-FDR.
     
     Modalities scored:
-      1. temp_shape: canonical duration deviation (|z_temp_shape|)
-      2. temp_shift: ancestral-propagated midpoint deviation (|z_temp_shift|)
-      3. spat_shift: center-of-mass Mahalanobis shift (d_spat_shift)
-      4. spat_shape: GP ribbon trajectory residual error (d_spat_shape)
-      5. warp: Fisher-Rao warping distance z-score (z_warp)
+      Temporal Domain:
+        1. temp_shape: autonomous duration log-deviation (|z_temp_shape|)
+        2. temp_shift: ancestral birth-time deviation (|z_temp_shift|)
+        3. warp: monotonic time-warping pacing distortion (rms_warp_min)
+      Spatial Domain:
+        4. spat_shift: center-of-mass Mahalanobis shift (d_spat_shift via Joint GP B)
+        5. spat_rot: local trajectory SO(3) Kabsch rotation angle (rot_angle_deg)
+        6. spat_shape: GP ribbon trajectory path residual error (d_spat_shape)
       
     Parameters
     ----------
@@ -66,9 +69,10 @@ def apply_empirical_calibration_to_inference(
     null_specs = {
         "temp_shape": ("emp_temp_shape", True),
         "temp_shift": ("emp_temp_shift", True),
-        "spat_shift": ("emp_spat_shift", False),
-        "spat_shape": ("emp_spat_shape", False),
         "warp": ("emp_warp", False),
+        "spat_shift": ("emp_spat_shift", False),
+        "spat_rot": ("emp_rot_angle", False),
+        "spat_shape": ("emp_spat_shape", False),
     }
 
     cal_meta = {
@@ -87,12 +91,16 @@ def apply_empirical_calibration_to_inference(
             test_score = np.abs(out["z_temp_shape"].to_numpy(dtype=float))
         elif metric == "temp_shift":
             test_score = np.abs(out["z_temp_shift"].to_numpy(dtype=float))
+        elif metric == "warp":
+            test_score = out["rms_warp_min"].to_numpy(dtype=float) if "rms_warp_min" in out.columns else out["z_warp"].to_numpy(dtype=float)
         elif metric == "spat_shift":
             test_score = out["d_spat_shift"].to_numpy(dtype=float)
+        elif metric == "spat_rot":
+            test_score = out["rot_angle_deg"].to_numpy(dtype=float)
         elif metric == "spat_shape":
             test_score = out["d_spat_shape"].to_numpy(dtype=float)
         else:
-            test_score = out["rms_warp_min"].to_numpy(dtype=float) if "rms_warp_min" in out.columns else out["z_warp"].to_numpy(dtype=float)
+            test_score = np.zeros(len(out), dtype=float)
 
         # Empirical p-values and per-embryo BH FDR
         out[p_col] = [calc_emp_pval(v, ref, two_sided=two_sided) for v in test_score]
@@ -100,7 +108,7 @@ def apply_empirical_calibration_to_inference(
         out[hit_col] = out[q_col] < alpha
         cal_meta[f"q95_{metric}_emp"] = float(np.percentile(ref, 95.0)) if ref.size else np.nan
 
-    metrics_suite = ["temp_shape", "temp_shift", "spat_shift", "spat_shape", "warp"]
+    metrics_suite = ["temp_shape", "temp_shift", "warp", "spat_shift", "spat_rot", "spat_shape"]
     hit_cols = [f"hit_{m}" for m in metrics_suite]
     out["n_outlier_modalities"] = out[hit_cols].sum(axis=1)
     out["is_any_outlier"] = out["n_outlier_modalities"] > 0
