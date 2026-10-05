@@ -281,6 +281,8 @@ def run_embryo_inference(
                 "pct_duration_deviation": pct_dur_dev,
                 "canon_duration": float(c_row["canon_duration"]),
                 "canon_mid": obs_mid,
+                "canon_birth": float(c_row["canon_birth"]) if "canon_birth" in c_row else float(obs_mid - 0.5 * c_row["canon_duration"]),
+                "canon_divide": float(c_row["canon_divide"]) if "canon_divide" in c_row else float(obs_mid + 0.5 * c_row["canon_duration"]),
                 "z_temp_shift": z_temp_shift,
                 "delta_midpoint_min": delta_mid,
                 "delta_birth_min": delta_birth_min,

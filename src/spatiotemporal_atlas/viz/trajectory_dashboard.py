@@ -207,8 +207,24 @@ def plot_cell_trajectory_diagnostic_dashboard(
     ref_dur = float(t_stat["mu_phys"])
     ref_d = ref_b + ref_dur
 
-    obs_b = float(target_row["canon_birth"]) if target_row is not None and "canon_birth" in target_row else t_birth
-    obs_dur = float(target_row["canon_duration"]) if target_row is not None and "canon_duration" in target_row else float(t_raw.max() - t_birth)
+    if target_row is not None and "canon_birth" in target_row and pd.notna(target_row["canon_birth"]):
+        obs_b = float(target_row["canon_birth"])
+    elif target_row is not None and "canon_mid" in target_row and "canon_duration" in target_row:
+        obs_b = float(target_row["canon_mid"]) - 0.5 * float(target_row["canon_duration"])
+    elif target_row is not None and "delta_birth_min" in target_row and pd.notna(target_row["delta_birth_min"]):
+        obs_b = ref_b + float(target_row["delta_birth_min"])
+    elif target_row is not None and "k_test" in target_row and "dt0_test" in target_row:
+        obs_b = (t_birth - float(target_row["dt0_test"])) / max(float(target_row["k_test"]), 1e-4)
+    else:
+        obs_b = t_birth
+
+    if target_row is not None and "canon_duration" in target_row and pd.notna(target_row["canon_duration"]):
+        obs_dur = float(target_row["canon_duration"])
+    elif target_row is not None and "k_test" in target_row:
+        obs_dur = float(t_raw.max() - t_birth) / max(float(target_row["k_test"]), 1e-4)
+    else:
+        obs_dur = float(t_raw.max() - t_birth)
+
     obs_d = obs_b + obs_dur
     dur_ratio = float(obs_dur / max(ref_dur, 1e-4))
     pct_dur_dev = float((dur_ratio - 1.0) * 100.0)
