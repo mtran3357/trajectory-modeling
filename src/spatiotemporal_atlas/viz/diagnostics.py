@@ -109,9 +109,15 @@ def visualize_embryo_diagnostics(
         if not emb_qc_row.empty:
             calib_meta["k_test"] = float(emb_qc_row["k_test"].iloc[0])
             calib_meta["dt0_test"] = float(emb_qc_row["dt0_test"].iloc[0])
+            for qc_key in ["scale_s", "inlier_ratio", "mean_inlier_res_um", "temporal_inlier_ratio"]:
+                if qc_key in emb_qc_row.columns:
+                    calib_meta[qc_key] = float(emb_qc_row[qc_key].iloc[0])
     elif "k_test" in target_df.columns:
         calib_meta["k_test"] = float(target_df["k_test"].iloc[0])
         calib_meta["dt0_test"] = float(target_df["dt0_test"].iloc[0])
+        for qc_key in ["scale_s", "inlier_ratio", "mean_inlier_res_um", "temporal_inlier_ratio"]:
+            if qc_key in target_df.columns:
+                calib_meta[qc_key] = float(target_df[qc_key].iloc[0])
     else:
         calib_meta["k_test"] = 1.0
         calib_meta["dt0_test"] = 0.0

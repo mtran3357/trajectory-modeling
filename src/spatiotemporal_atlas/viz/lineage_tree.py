@@ -19,6 +19,28 @@ from ..types import ReferenceAtlas
 from .colors import get_canonical_clade_color
 
 
+def get_canonical_clade_rank(cell_name: str) -> int:
+    """Returns canonical Sulston founder clade rank (ABa < ABp < MS < E < C < D < P)."""
+    c = str(cell_name).strip()
+    if c.startswith("ABa"):
+        return 0
+    if c.startswith("ABp"):
+        return 1
+    if c.startswith("AB"):
+        return 2
+    if c.startswith("EMS") or c.startswith("MS"):
+        return 3
+    if c.startswith("E"):
+        return 4
+    if c.startswith("C"):
+        return 5
+    if c.startswith("D"):
+        return 6
+    if c.startswith("P") or c.startswith("Z"):
+        return 7
+    return 8
+
+
 def build_interval_tree_layout(
     valid_cells: set[str], lineage_df: pd.DataFrame
 ) -> tuple[dict[str, float], dict[str, list[str]], set[str]]:
@@ -66,8 +88,11 @@ def build_interval_tree_layout(
             G.add_node(c)
 
     local_roots = {n for n in valid_cells if n not in parent_map}
-    leaves = sorted([n for n in G.nodes() if G.out_degree(n) == 0])
-    x_coords = {leaf: float(i * 2.0) for i, leaf in enumerate(leaves)}
+    leaves = sorted(
+        [n for n in G.nodes() if G.out_degree(n) == 0],
+        key=lambda c: (get_canonical_clade_rank(c), c),
+    )
+    x_coords = {leaf: float(i * 2.5) for i, leaf in enumerate(leaves)}
 
     if nx.is_directed_acyclic_graph(G):
         for n in reversed(list(nx.topological_sort(G))):
@@ -443,8 +468,9 @@ def plot_warping_velocity_dual_lineage(
     )
     ax.set_ylim(max(all_times) + 8.0, min(all_times) - 8.0)
     ax.set_xlim(min(x_coords.values()) - 2.0, max(x_coords.values()) + 2.0)
-    ax.set_xticks(list(x_coords.values()))
-    ax.set_xticklabels(list(x_coords.keys()), rotation=90, fontsize=8)
+    sorted_items = sorted(x_coords.items(), key=lambda t: t[1])
+    ax.set_xticks([t[1] for t in sorted_items])
+    ax.set_xticklabels([t[0] for t in sorted_items], rotation=90, fontsize=8)
     ax.set_ylabel("Canonical Developmental Time (min)", fontsize=11, fontweight="bold")
     ax.set_xlabel("Lineage Blastomeres", fontsize=11, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.4, axis="y")
@@ -466,6 +492,8 @@ def plot_warping_velocity_dual_lineage(
         Line2D([0], [0], color="#ff7f0e", lw=4.0, label="Reference: EMS / MS clade"),
         Line2D([0], [0], color="#2ecc71", lw=4.0, label="Reference: E clade"),
         Line2D([0], [0], color="#9467bd", lw=4.0, label="Reference: C clade"),
+        Line2D([0], [0], color="#8c564b", lw=4.0, label="Reference: D clade"),
+        Line2D([0], [0], color="#e377c2", lw=4.0, label="Reference: Germline / P4 clade"),
         Line2D([0], [0], marker="_", color="#000000", mew=1.4, ms=8, label=r"Reference timing ($\pm1\sigma$)"),
         Line2D([0], [0], color="#b0bec5", lw=4.0, label=r"Observed: colored by $\dot{\gamma}(t)$"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor="#e74c3c", markeredgecolor="#ffffff", ms=7, label="Empirical temporal-shift / warp outlier"),
@@ -476,18 +504,59 @@ def plot_warping_velocity_dual_lineage(
         handles=legend_handles,
         loc="lower left",
         frameon=True,
-        fontsize=8.2,
+        fontsize=8.0,
         ncol=2,
         title="Lineage Atlas & Anomaly Modalities",
     )
 
-    k_val = calib_meta.get("k_test", test_results_df["k_test"].iloc[0] if "k_test" in test_results_df.columns else 1.0)
-    plt.suptitle(
+    if "k_test" in calib_meta:
+        k_val = float(calib_meta["k_test"])
+    elif "k_test" in test_results_df.columns:
+        k_val = float(test_results_df["k_test"].iloc[0])
+    else:
+        k_val = 1.0
+
+    if "dt0_test" in calib_meta:
+        dt0_val = float(calib_meta["dt0_test"])
+    elif "dt0_test" in test_results_df.columns:
+        dt0_val = float(test_results_df["dt0_test"].iloc[0])
+    else:
+        dt0_val = 0.0
+
+    qc_items = []
+    if "scale_s" in calib_meta:
+        qc_items.append(f"Spatial Scale $s = {float(calib_meta['scale_s']):.3f}$")
+    elif "scale_s" in test_results_df.columns:
+        qc_items.append(f"Spatial Scale $s = {float(test_results_df['scale_s'].iloc[0]):.3f}$")
+
+    if "inlier_ratio" in calib_meta:
+        qc_items.append(f"Landmark Inliers = {float(calib_meta['inlier_ratio']) * 100:.1f}%")
+    elif "inlier_ratio" in test_results_df.columns:
+        qc_items.append(f"Landmark Inliers = {float(test_results_df['inlier_ratio'].iloc[0]) * 100:.1f}%")
+
+    if "mean_inlier_res_um" in calib_meta:
+        qc_items.append(f"Mean Inlier Residual = {float(calib_meta['mean_inlier_res_um']):.1f} $\\mu\\mathrm{{m}}$")
+    elif "mean_inlier_res_um" in test_results_df.columns:
+        qc_items.append(f"Mean Inlier Residual = {float(test_results_df['mean_inlier_res_um'].iloc[0]):.1f} $\\mu\\mathrm{{m}}$")
+
+    if "temporal_inlier_ratio" in calib_meta:
+        qc_items.append(f"Temporal Inliers = {float(calib_meta['temporal_inlier_ratio']) * 100:.1f}%")
+    elif "temporal_inlier_ratio" in test_results_df.columns:
+        qc_items.append(f"Temporal Inliers = {float(test_results_df['temporal_inlier_ratio'].iloc[0]) * 100:.1f}%")
+
+    qc_subtitle = "  |  ".join(qc_items)
+    full_title = (
         f"Paired Reference vs. Observed Lineage Atlas: Test Embryo '{test_embryo_id}'\n"
-        rf"Affine Pace $K_e = {k_val:.4f}$",
-        fontsize=13,
+        rf"Affine Pace $K_e = {k_val:.4f}$, Timing Offset $dt_0 = {dt0_val:+.2f}$ min"
+    )
+    if qc_subtitle:
+        full_title += f"\nWhole-Embryo QC: {qc_subtitle}"
+
+    plt.suptitle(
+        full_title,
+        fontsize=12.5,
         fontweight="bold",
-        y=0.992,
+        y=0.995,
     )
     plt.tight_layout()
     return fig, ax

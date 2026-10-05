@@ -45,6 +45,17 @@ def test_build_interval_tree_layout():
     assert "AB" in children_map
     assert set(children_map["AB"]) == {"ABa", "ABp"}
     assert all(c in x_coords for c in valid_cells)
+    assert x_coords["ABa"] < x_coords["ABp"]
+
+    # Verify canonical Sulston founder clade ordering: ABa < ABp < MS < E < C < D < P4
+    multi_lineage_df = pd.DataFrame([
+        {"parent": "EMS", "daughter1": "MS", "daughter2": "E"},
+        {"parent": "P2", "daughter1": "C", "daughter2": "P3"},
+        {"parent": "P3", "daughter1": "D", "daughter2": "P4"},
+    ])
+    clade_cells = {"ABa", "ABp", "MS", "E", "C", "D", "P4"}
+    x_clades, _, _ = build_interval_tree_layout(clade_cells, multi_lineage_df)
+    assert x_clades["ABa"] < x_clades["ABp"] < x_clades["MS"] < x_clades["E"] < x_clades["C"] < x_clades["D"] < x_clades["P4"]
 
 
 def test_plot_6metric_manhattan():
