@@ -468,9 +468,22 @@ def plot_warping_velocity_dual_lineage(
     )
     ax.set_ylim(max(all_times) + 8.0, min(all_times) - 8.0)
     ax.set_xlim(min(x_coords.values()) - 2.0, max(x_coords.values()) + 2.0)
-    sorted_items = sorted(x_coords.items(), key=lambda t: t[1])
-    ax.set_xticks([t[1] for t in sorted_items])
-    ax.set_xticklabels([t[0] for t in sorted_items], rotation=90, fontsize=8)
+    x_to_cells: dict[float, list[str]] = {}
+    for c, x in x_coords.items():
+        x_round = round(x, 4)
+        x_to_cells.setdefault(x_round, []).append(c)
+
+    unique_ticks = []
+    unique_labels = []
+    for x_val in sorted(x_to_cells.keys()):
+        cells_at_x = x_to_cells[x_val]
+        leaf_at_x = [c for c in cells_at_x if len(children_map.get(c, [])) == 0]
+        label = leaf_at_x[0] if leaf_at_x else cells_at_x[0]
+        unique_ticks.append(x_val)
+        unique_labels.append(label)
+
+    ax.set_xticks(unique_ticks)
+    ax.set_xticklabels(unique_labels, rotation=90, fontsize=8)
     ax.set_ylabel("Canonical Developmental Time (min)", fontsize=11, fontweight="bold")
     ax.set_xlabel("Lineage Blastomeres", fontsize=11, fontweight="bold")
     ax.grid(True, linestyle=":", alpha=0.4, axis="y")
