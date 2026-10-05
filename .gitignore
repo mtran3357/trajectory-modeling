@@ -33,3 +33,5 @@ venv/
 *.parquet
 /models/
 /loocv_output/
+cv_artifacts/
+

@@ -169,28 +169,36 @@ def run_embryo_inference(
             delta_dur_min = float(c_row["canon_duration"] - t_stat["mu_phys"])
             pct_dur_dev = float((np.exp(log_dur_obs - t_stat["mu_log"]) - 1.0) * 100.0)
 
-            # 2. Temporal Shift (Midpoint and Birth)
+            # 2. Temporal Shift (Birth Time Anchored)
             local_root, path_ancestors = get_ancestral_path_in_interval(
                 c_name, parent_map, set(temporal_atlas.keys())
             )
             root_stat = temporal_atlas[local_root]
             ancestor_mus = [temporal_atlas[a]["mu_phys"] for a in path_ancestors]
             ancestor_vars = [temporal_atlas[a]["var_phys"] for a in path_ancestors]
-            e_mid_path = root_stat["mu_birth"] + sum(ancestor_mus) + 0.5 * t_stat["mu_phys"]
-            var_path = root_stat["var_birth"] + sum(ancestor_vars) + 0.25 * t_stat["var_phys"]
-            elapsed_time = max(e_mid_path - root_stat["mu_birth"], 0.0)
-            total_std_shift = np.sqrt(max(var_path + (elapsed_time ** 2) * var_tempo_estimation, 1e-4))
+
+            # Lineage-propagated birth expectation and variance
+            e_birth_path = root_stat["mu_birth"] + sum(ancestor_mus)
+            var_birth_path = root_stat["var_birth"] + sum(ancestor_vars)
+            elapsed_birth_time = max(e_birth_path - root_stat["mu_birth"], 0.0)
+            total_std_birth = np.sqrt(max(var_birth_path + (elapsed_birth_time ** 2) * var_tempo_estimation, 1e-4))
+
+            canon_birth_obs = float(c_row["canon_birth"]) if "canon_birth" in c_row else t_birth
+            delta_birth_min = float(canon_birth_obs - e_birth_path)
+            z_temp_shift = float(delta_birth_min / total_std_birth) if total_std_birth > 0 else 0.0
+
+            # Midpoint diagnostics (preserved for reporting)
+            e_mid_path = e_birth_path + 0.5 * t_stat["mu_phys"]
             obs_mid = float(c_row["canon_mid"])
             delta_mid = float(obs_mid - e_mid_path)
-            z_temp_shift = float(delta_mid / total_std_shift) if total_std_shift > 0 else 0.0
 
-            mu_birth_can = float(root_stat["mu_birth"] + sum(ancestor_mus))
-            canon_birth_obs = float(c_row["canon_birth"]) if "canon_birth" in c_row else t_birth
-            delta_birth_min = float(canon_birth_obs - mu_birth_can)
-
-            # 3. Spatial Shift
+            # 3. Spatial Shift (Mahalanobis COM via Joint GP B)
             diff_com = com - m_info["mu_com"]
-            d2_shift_raw = float(diff_com.T @ m_info["inv_cov_com"] @ diff_com)
+            if m_info.get("B_cov") is not None:
+                inv_B = np.linalg.pinv(m_info["B_cov"])
+                d2_shift_raw = float(diff_com.T @ inv_B @ diff_com)
+            else:
+                d2_shift_raw = float(diff_com.T @ m_info["inv_cov_com"] @ diff_com)
             d_spat_shift = float(np.sqrt(max(d2_shift_raw, 0.0)))
             com_shift_um = float(np.linalg.norm(diff_com))
 

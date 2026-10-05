@@ -11,6 +11,8 @@ from spatiotemporal_atlas.viz import (
     assign_lineage,
     build_interval_tree_layout,
     plot_5metric_manhattan,
+    plot_6metric_manhattan,
+    plot_cell_trajectory_diagnostic_dashboard,
     plot_warping_velocity_dual_lineage,
     visualize_embryo_diagnostics,
 )
@@ -45,8 +47,8 @@ def test_build_interval_tree_layout():
     assert all(c in x_coords for c in valid_cells)
 
 
-def test_plot_5metric_manhattan():
-    """Verify Manhattan plot creates 5 axes and annotations without errors."""
+def test_plot_6metric_manhattan():
+    """Verify Manhattan plot creates 6 axes across the spatiotemporal suite without errors."""
     mock_df = pd.DataFrame([
         {
             "embryo_id": "test_emb",
@@ -58,11 +60,15 @@ def test_plot_5metric_manhattan():
             "pval_temp_shift": 0.02,
             "qval_temp_shift": 0.04,
             "hit_temp_shift": True,
-            "delta_midpoint_min": 3.2,
+            "delta_birth_min": 3.2,
             "pval_spat_shift": 0.1,
             "qval_spat_shift": 0.2,
             "hit_spat_shift": False,
             "com_shift_um": 1.2,
+            "pval_spat_rot": 0.03,
+            "qval_spat_rot": 0.05,
+            "hit_spat_rot": True,
+            "rot_angle_deg": 25.0,
             "pval_spat_shape": 0.0005,
             "qval_spat_shape": 0.002,
             "hit_spat_shape": True,
@@ -70,7 +76,7 @@ def test_plot_5metric_manhattan():
             "pval_warp": 0.5,
             "qval_warp": 0.6,
             "hit_warp": False,
-            "signed_warp_area": 0.02,
+            "rms_warp_min": 0.02,
             "k_test": 1.05,
             "dt0_test": -2.0,
         },
@@ -84,11 +90,15 @@ def test_plot_5metric_manhattan():
             "pval_temp_shift": 0.4,
             "qval_temp_shift": 0.5,
             "hit_temp_shift": False,
-            "delta_midpoint_min": -0.5,
+            "delta_birth_min": -0.5,
             "pval_spat_shift": 0.001,
             "qval_spat_shift": 0.005,
             "hit_spat_shift": True,
             "com_shift_um": 4.5,
+            "pval_spat_rot": 0.4,
+            "qval_spat_rot": 0.5,
+            "hit_spat_rot": False,
+            "rot_angle_deg": 5.0,
             "pval_spat_shape": 0.3,
             "qval_spat_shape": 0.4,
             "hit_spat_shape": False,
@@ -96,19 +106,114 @@ def test_plot_5metric_manhattan():
             "pval_warp": 0.002,
             "qval_warp": 0.008,
             "hit_warp": True,
-            "signed_warp_area": 0.15,
+            "rms_warp_min": 0.15,
             "k_test": 1.05,
             "dt0_test": -2.0,
         },
     ])
 
-    fig, axes = plot_5metric_manhattan(
+    fig, axes = plot_6metric_manhattan(
         test_results_df=mock_df,
         figsize=(12, 14),
         dpi=80,
     )
-    assert len(axes) == 5
+    assert len(axes) == 6
     plt.close(fig)
+
+    # Backward compatibility alias test
+    fig5, axes5 = plot_5metric_manhattan(
+        test_results_df=mock_df,
+        figsize=(12, 14),
+        dpi=80,
+    )
+    assert len(axes5) == 6
+    plt.close(fig5)
+
+
+def test_plot_cell_trajectory_diagnostic_dashboard():
+    """Verify single-cell trajectory diagnostic dashboard renders 6 panels."""
+    time_grid = np.linspace(0, 20, 20)
+    mock_pos_df = pd.DataFrame({
+        "series": ["test_emb"] * 15,
+        "cell": ["ABa"] * 15,
+        "time": np.linspace(10, 25, 15),
+        "x_aligned_um": np.sin(np.linspace(0, 2, 15)),
+        "y_aligned_um": np.cos(np.linspace(0, 2, 15)),
+        "z_aligned_um": np.linspace(0, 5, 15),
+    })
+
+    mock_model = {
+        "cell": "ABa",
+        "time_grid": time_grid,
+        "tau_cutoff": 20.0,
+        "template_curve": np.zeros((20, 3)),
+        "s_dense": np.linspace(0, 1, 50),
+        "dense_mu_3d": np.zeros((50, 3)),
+        "dense_cov_3d": np.array([np.eye(3) * 0.1 for _ in range(50)]),
+        "dense_pred": {
+            col: {"mu": np.zeros(50), "std": np.ones(50) * 0.1}
+            for col in ["x_aligned_um", "y_aligned_um", "z_aligned_um"]
+        },
+        "mu_com": np.array([0.0, 0.0, 2.5]),
+    }
+
+    mock_temporal_atlas = {
+        "ABa": {
+            "mu_birth": 10.0,
+            "mu_phys": 15.0,
+            "var_birth": 0.5,
+            "var_phys": 1.0,
+            "var_path": 0.8,
+        }
+    }
+
+    mock_target_row = pd.Series({
+        "cell": "ABa",
+        "series": "test_emb",
+        "pval_temp_shape": 0.05,
+        "qval_temp_shape": 0.05,
+        "hit_temp_shape": False,
+        "pval_temp_shift": 0.05,
+        "qval_temp_shift": 0.05,
+        "hit_temp_shift": False,
+        "pval_warp": 0.05,
+        "qval_warp": 0.05,
+        "hit_warp": False,
+        "pval_spat_shift": 0.05,
+        "qval_spat_shift": 0.05,
+        "hit_spat_shift": False,
+        "pval_spat_rot": 0.05,
+        "qval_spat_rot": 0.05,
+        "hit_spat_rot": False,
+        "pval_spat_shape": 0.05,
+        "qval_spat_shape": 0.05,
+        "hit_spat_shape": False,
+        "n_outlier_modalities": 0,
+        "rms_warp_min": 0.2,
+        "delta_birth_min": 0.5,
+        "com_shift_um": 0.8,
+        "rot_angle_deg": 12.0,
+        "rmse_3d_um": 0.4,
+    })
+
+    fig, axes_dict = plot_cell_trajectory_diagnostic_dashboard(
+        cell_name="ABa",
+        embryo_id="test_emb",
+        pos_df=mock_pos_df,
+        target_row=mock_target_row,
+        cell_model=mock_model,
+        temporal_atlas=mock_temporal_atlas,
+        figsize=(12, 10),
+        dpi=80,
+    )
+
+    assert fig is not None
+    assert len(axes_dict) == 6
+    for key in ["ax_x", "ax_y", "ax_z", "ax_gamma", "ax_3d", "ax_timing"]:
+        assert key in axes_dict
+    plt.close(fig)
+
+
 
 
 def test_plot_dual_lineage_and_diagnostics():

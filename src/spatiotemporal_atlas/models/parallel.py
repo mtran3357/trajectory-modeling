@@ -157,15 +157,18 @@ def _fit_and_score_single_cell_worker(
         )
 
     mu_com = np.mean(train_coms, axis=0)
-    if len(train_coms) > 2:
+    if model_type == "joint_gp" and joint_model is not None and "B" in joint_model:
+        inv_cov_com = np.linalg.pinv(joint_model["B"])
+    elif len(train_coms) > 2:
         cov_com = np.cov(train_coms, rowvar=False) + np.eye(3) * 0.25
+        inv_cov_com = np.linalg.pinv(cov_com)
     elif len(train_coms) == 2:
         diff = train_coms[0] - train_coms[1]
         cov_com = np.outer(diff, diff) + np.eye(3) * 0.25
+        inv_cov_com = np.linalg.pinv(cov_com)
     else:
         cov_com = np.eye(3) * 0.25
-
-    inv_cov_com = np.linalg.pinv(cov_com)
+        inv_cov_com = np.linalg.pinv(cov_com)
     mu_warp = float(np.mean(train_warp_rms)) if train_warp_rms else 0.0
     std_warp = float(np.std(train_warp_rms, ddof=1)) if len(train_warp_rms) > 1 else 0.1
 
@@ -203,24 +206,28 @@ def _fit_and_score_single_cell_worker(
         delta_dur_min = float(te_cell_row["canon_duration"].iloc[0] - t_stat["mu_phys"])
         pct_dur_dev = float((np.exp(log_dur_obs - t_stat["mu_log"]) - 1.0) * 100.0)
 
-        # 2. Temporal Shift (Midpoint and Birth)
+        # 2. Temporal Shift (Birth Time Anchored)
         local_root, path_ancestors = get_ancestral_path_in_interval(
             c, parent_map, set(temporal_atlas.keys())
         )
         root_stat = temporal_atlas[local_root]
         ancestor_mus = [temporal_atlas[a]["mu_phys"] for a in path_ancestors]
         ancestor_vars = [temporal_atlas[a]["var_phys"] for a in path_ancestors]
-        e_mid_path = root_stat["mu_birth"] + sum(ancestor_mus) + 0.5 * t_stat["mu_phys"]
-        var_path = root_stat["var_birth"] + sum(ancestor_vars) + 0.25 * t_stat["var_phys"]
-        elapsed_time = max(e_mid_path - root_stat["mu_birth"], 0.0)
-        total_std_shift = np.sqrt(max(var_path + (elapsed_time ** 2) * var_tempo_estimation, 1e-4))
+
+        # Lineage-propagated birth expectation and variance
+        e_birth_path = root_stat["mu_birth"] + sum(ancestor_mus)
+        var_birth_path = root_stat["var_birth"] + sum(ancestor_vars)
+        elapsed_birth_time = max(e_birth_path - root_stat["mu_birth"], 0.0)
+        total_std_birth = np.sqrt(max(var_birth_path + (elapsed_birth_time ** 2) * var_tempo_estimation, 1e-4))
+
+        canon_birth_obs = float(te_cell_row["canon_birth"].iloc[0]) if "canon_birth" in te_cell_row.columns else t_birth
+        delta_birth_min = float(canon_birth_obs - e_birth_path)
+        z_temp_shift = float(delta_birth_min / (total_std_birth * factor_pred_1d)) if total_std_birth > 0 else 0.0
+
+        # Midpoint diagnostics (preserved for reporting)
+        e_mid_path = e_birth_path + 0.5 * t_stat["mu_phys"]
         obs_mid = float(te_cell_row["canon_mid"].iloc[0])
         delta_mid = float(obs_mid - e_mid_path)
-        z_temp_shift = float(delta_mid / total_std_shift) if total_std_shift > 0 else 0.0
-
-        mu_birth_can = float(root_stat["mu_birth"] + sum(ancestor_mus))
-        canon_birth_obs = float(te_cell_row["canon_birth"].iloc[0]) if "canon_birth" in te_cell_row.columns else t_birth
-        delta_birth_min = float(canon_birth_obs - mu_birth_can)
 
         # 3. Spatial Shift
         diff_com = com_test - mu_com

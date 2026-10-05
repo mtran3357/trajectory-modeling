@@ -1,4 +1,4 @@
-"""5-Metric Manhattan plot across multi-modal empirical trajectory anomaly benchmarks."""
+"""6-Metric Manhattan plot across multi-modal empirical trajectory anomaly benchmarks."""
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,22 +6,25 @@ import pandas as pd
 from .colors import LINEAGE_PALETTE, assign_lineage
 
 
-def plot_5metric_manhattan(
+def plot_6metric_manhattan(
     test_results_df: pd.DataFrame,
     calib_meta: dict | None = None,
     alpha: float = 0.05,
     top_n_labels: int = 4,
-    figsize: tuple[float, float] = (20.0, 22.0),
+    figsize: tuple[float, float] = (20.0, 25.0),
     dpi: int = 130,
 ) -> tuple[plt.Figure, np.ndarray]:
-    """Generates a 5-panel Manhattan plot across the full empirical benchmark suite.
+    """Generates a 6-panel Manhattan plot across the full empirical benchmark suite.
     
     Panels:
-      A. Temporal Shape: Autonomous Duration Anomaly (-log10 p_temp_shape)
-      B. Temporal Shift: Propagated Tree Phase Drift (-log10 p_temp_shift)
-      C. Spatial Shift: Center-of-Mass Misplacement (-log10 p_spat_shift)
-      D. Spatial Shape: GP Trajectory Path Residual (-log10 p_spat_shape)
-      E. Spatiotemporal Warp: Monotonic Pacing Distortion (-log10 p_warp)
+      Temporal Domain:
+        A. Temporal Shape: Autonomous Duration Anomaly (-log10 p_temp_shape)
+        B. Temporal Shift: Lineage Birth Time Drift (-log10 p_temp_shift)
+        C. Spatiotemporal Warp: Monotonic Pacing Distortion (-log10 p_warp)
+      Spatial Domain:
+        D. Spatial Shift: Center-of-Mass Misplacement (-log10 p_spat_shift)
+        E. Spatial Orientation: Trajectory Migration Deflection (-log10 p_spat_rot)
+        F. Spatial Shape: GP Trajectory Path Residual (-log10 p_spat_shape)
       
     Parameters
     ----------
@@ -33,7 +36,7 @@ def plot_5metric_manhattan(
         FDR significance cutoff.
     top_n_labels : int, default=4
         Number of top significant blastomeres to annotate per panel.
-    figsize : tuple of (float, float), default=(20, 22)
+    figsize : tuple of (float, float), default=(20, 25)
         Matplotlib figure dimensions.
     dpi : int, default=130
         Figure resolution.
@@ -43,7 +46,7 @@ def plot_5metric_manhattan(
     fig : plt.Figure
         Matplotlib Figure object.
     axes : np.ndarray of plt.Axes
-        Array of 5 panel Axes.
+        Array of 6 panel Axes.
     """
     plot_df = test_results_df.copy()
     test_embryo_id = str(plot_df["embryo_id"].iloc[0]) if "embryo_id" in plot_df.columns else "Query"
@@ -64,7 +67,7 @@ def plot_5metric_manhattan(
     plot_df["x_coord"] = np.arange(n_cells)
     eps = 1e-12
 
-    fig, axes = plt.subplots(5, 1, figsize=figsize, sharex=True, dpi=dpi)
+    fig, axes = plt.subplots(6, 1, figsize=figsize, sharex=True, dpi=dpi)
 
     neg_log_nom = -np.log10(alpha)
     neg_log_bonf = -np.log10(alpha / max(n_cells, 1))
@@ -77,43 +80,52 @@ def plot_5metric_manhattan(
             "hit_temp_shape",
             "pct_duration_deviation",
             "%",
-            r"A. Temporal Shape: Autonomous Duration Anomaly ($-\log_{10} p_{Z_{\mathrm{temp\_shape}}}$)",
+            r"A. Temporal Shape: Autonomous Duration Anomaly ($-\log_{10} p_{\mathrm{temp\_shape}}$)",
         ),
         (
             axes[1],
             "pval_temp_shift",
             "qval_temp_shift",
             "hit_temp_shift",
-            "delta_midpoint_min",
+            "delta_birth_min" if "delta_birth_min" in plot_df.columns else "delta_midpoint_min",
             " min",
-            r"B. Temporal Shift: Propagated Tree Phase Drift ($-\log_{10} p_{Z_{\mathrm{temp\_shift}}}$)",
+            r"B. Temporal Shift: Lineage Birth Time Drift ($-\log_{10} p_{\mathrm{temp\_shift}}$)",
         ),
         (
             axes[2],
-            "pval_spat_shift",
-            "qval_spat_shift",
-            "hit_spat_shift",
-            "com_shift_um",
-            r" $\mu$m",
-            r"C. Spatial Shift: Center-of-Mass Misplacement ($-\log_{10} p_{D_{\mathrm{spat\_shift}}}$)",
-        ),
-        (
-            axes[3],
-            "pval_spat_shape",
-            "qval_spat_shape",
-            "hit_spat_shape",
-            "rmse_3d_um",
-            r" $\mu$m RMSE",
-            r"D. Spatial Shape: GP Trajectory Path Residual ($-\log_{10} p_{D_{\mathrm{spat\_shape}}}$)",
-        ),
-        (
-            axes[4],
             "pval_warp",
             "qval_warp",
             "hit_warp",
             "rms_warp_min" if "rms_warp_min" in plot_df.columns else "signed_warp_area",
             r" min RMS" if "rms_warp_min" in plot_df.columns else r" $\Delta A_\gamma$",
-            r"E. Spatiotemporal Warp: Monotonic Pacing Distortion ($-\log_{10} p_{\mathrm{warp}}$)",
+            r"C. Spatiotemporal Warp: Monotonic Pacing Distortion ($-\log_{10} p_{\mathrm{warp}}$)",
+        ),
+        (
+            axes[3],
+            "pval_spat_shift",
+            "qval_spat_shift",
+            "hit_spat_shift",
+            "com_shift_um",
+            r" $\mu$m",
+            r"D. Spatial Shift: Center-of-Mass Misplacement ($-\log_{10} p_{\mathrm{spat\_shift}}$)",
+        ),
+        (
+            axes[4],
+            "pval_spat_rot",
+            "qval_spat_rot",
+            "hit_spat_rot",
+            "rot_angle_deg",
+            r"$^\circ$",
+            r"E. Spatial Orientation: Trajectory Migration Deflection ($-\log_{10} p_{\mathrm{spat\_rot}}$)",
+        ),
+        (
+            axes[5],
+            "pval_spat_shape",
+            "qval_spat_shape",
+            "hit_spat_shape",
+            "rmse_3d_um",
+            r" $\mu$m RMSE",
+            r"F. Spatial Shape: GP Trajectory Path Residual ($-\log_{10} p_{\mathrm{spat\_shape}}$)",
         ),
     ]
 
@@ -211,7 +223,7 @@ def plot_5metric_manhattan(
     dt0_val = calib_meta.get("dt0_test", plot_df["dt0_test"].iloc[0] if "dt0_test" in plot_df.columns else 0.0)
 
     plt.suptitle(
-        f"Unified 5-Metric Empirical Anomaly Profile: Test Embryo '{test_embryo_id}'\n"
+        f"Unified 6-Metric Empirical Anomaly Profile: Test Embryo '{test_embryo_id}'\n"
         rf"Affine Registration: Pace $K_e = {k_val:.4f}$, Phase $\Delta t_0 = {dt0_val:+.2f}$ min",
         fontsize=13.5,
         fontweight="bold",
@@ -219,3 +231,7 @@ def plot_5metric_manhattan(
     )
     plt.tight_layout(rect=[0, 0.01, 1, 0.975])
     return fig, axes
+
+
+# Backward-compatible alias
+plot_5metric_manhattan = plot_6metric_manhattan

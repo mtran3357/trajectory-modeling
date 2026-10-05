@@ -240,9 +240,10 @@ def plot_warping_velocity_dual_lineage(
         hit_columns = [
             "hit_temp_shape",
             "hit_temp_shift",
-            "hit_spat_shift",
-            "hit_spat_shape",
             "hit_warp",
+            "hit_spat_shift",
+            "hit_spat_rot",
+            "hit_spat_shape",
         ]
         modality_hits = {
             col.replace("hit_", ""): bool(row_te.get(col, False))
@@ -374,7 +375,7 @@ def plot_warping_velocity_dual_lineage(
             elif hits.get("temp_shift", False) or hits.get("warp", False):
                 marker_color = "#e74c3c"
                 marker_size = 60
-            elif hits.get("spat_shift", False) or hits.get("spat_shape", False):
+            elif hits.get("spat_shift", False) or hits.get("spat_rot", False) or hits.get("spat_shape", False):
                 marker_color = "#e67e22"
                 marker_size = 60
             else:
