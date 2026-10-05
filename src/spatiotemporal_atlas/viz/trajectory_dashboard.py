@@ -35,7 +35,7 @@ def plot_cell_trajectory_diagnostic_dashboard(
       1-3: X(tau), Y(tau), Z(tau) progression profiles with Joint GP ribbon, aligned/warped
            query points, and raw-centered trajectory (light dashed line) for visual contrast.
       4:   Regularized monotonic time-warping diffeomorphism gamma(tau) on [0, tau_cutoff].
-      5:   3D morphogenetic trajectory, Center-of-Mass Mahalanobis displacement, and SO(3) rotation.
+      5:   3D spatial alignment showing canonical reference path and locally registered track (post-COM, rotation, & warp).
       6:   Birth-anchored developmental lifespan interval comparison with tree-propagated uncertainty.
       
     Parameters
@@ -315,37 +315,36 @@ def plot_cell_trajectory_diagnostic_dashboard(
     ax_gamma.grid(True, linestyle=":", alpha=0.5)
     ax_gamma.legend(frameon=True, fontsize=7.2, loc="upper left")
 
-    # Panel 5: 3D Trajectory & Spatial Alignment
+    # Panel 5: 3D Trajectory & Spatial Alignment (Two Curves: Canonical Reference & Locally Registered)
     canon_3d = np.column_stack([
         gp_preds[spatial_cols[0]]["mu"] + mu_com[0],
         gp_preds[spatial_cols[1]]["mu"] + mu_com[1],
         gp_preds[spatial_cols[2]]["mu"] + mu_com[2],
     ])
-    raw_3d = xyz_raw
+    registered_3d = xyz_eval + mu_com
 
-    # Canonical reference path
-    ax_3d.plot(canon_3d[:, 0], canon_3d[:, 1], canon_3d[:, 2], color="#2c3e50", linewidth=2.4, label="Canonical Reference Path")
-    # Raw observed track (pre-rotation)
-    ax_3d.plot(raw_3d[:, 0], raw_3d[:, 1], raw_3d[:, 2], color="#95a5a6", linestyle="--", linewidth=1.4, alpha=0.75, label="Raw Track (pre-rotation)")
-    # Rotated observed track
-    rotated_3d = coords_aligned + com_obs
-    ax_3d.plot(rotated_3d[:, 0], rotated_3d[:, 1], rotated_3d[:, 2], color="#d63031", linewidth=2.0, marker="o", markersize=3.5, label=f"Rotated Track ($\mathbf{{R}}_{{\mathrm{{test}}}}$)")
-
-
-    # Center of Mass markers
-    ax_3d.scatter(mu_com[0], mu_com[1], mu_com[2], color="#2c3e50", s=65, marker="^", label=r"$\boldsymbol{\mu}_{\mathrm{COM}}$")
-    ax_3d.scatter(com_obs[0], com_obs[1], com_obs[2], color="#d63031", s=65, marker="^", label=r"$\bar{\mathbf{x}}_{\mathrm{obs}}$")
+    # 1. Canonical Reference Path
     ax_3d.plot(
-        [mu_com[0], com_obs[0]], [mu_com[1], com_obs[1]], [mu_com[2], com_obs[2]],
-        "k--", linewidth=1.2,
-        label=rf"$\mathcal{{D}}_{{\mathrm{{shift}}}} = {d_shift_score:.2f}$ ({d_shift_euclid:.1f} $\mu\mathrm{{m}}$)",
+        canon_3d[:, 0], canon_3d[:, 1], canon_3d[:, 2],
+        color="#2c3e50", linewidth=2.4, label="Canonical Reference Path", zorder=3,
+    )
+    # 2. Locally Registered Track (rigid rotation + COM alignment + warping)
+    ax_3d.plot(
+        registered_3d[:, 0], registered_3d[:, 1], registered_3d[:, 2],
+        color="#d63031", linewidth=2.0, marker="o", markersize=3.5,
+        label=f"Locally Registered Track ({embryo_id})", zorder=4,
     )
 
-    ax_3d.set_title(rf"3D Spatial Alignment ($\theta_{{\mathrm{{rot}}}} = {rot_angle_val:.1f}^\circ${q_rot_s})", fontsize=11, fontweight="bold")
+    ax_3d.set_title(
+        rf"3D Spatial Alignment (Registered & Warped)" + "\n"
+        rf"($\theta_{{\mathrm{{rot}}}} = {rot_angle_val:.1f}^\circ${q_rot_s}, $\mathcal{{M}}_{{\mathrm{{shape}}}} = {spat_shape_score:.2f}${q_shape_s})",
+        fontsize=10.5,
+        fontweight="bold",
+    )
     ax_3d.set_xlabel(r"$X$ ($\mu\mathrm{m}$)", fontsize=8.5)
     ax_3d.set_ylabel(r"$Y$ ($\mu\mathrm{m}$)", fontsize=8.5)
     ax_3d.set_zlabel(r"$Z$ ($\mu\mathrm{m}$)", fontsize=8.5)
-    ax_3d.legend(frameon=True, fontsize=6.8, loc="upper right")
+    ax_3d.legend(frameon=True, fontsize=7.2, loc="upper right")
 
     # Panel 6: Birth-Anchored Developmental Lifespan Interval
     clade_color = get_canonical_clade_color(cell_name)
