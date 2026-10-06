@@ -8,21 +8,30 @@ A modular framework for constructing 4D spatiotemporal atlases of *C. elegans* e
   - Scale-normalized Generalized Procrustes Analysis (GPA) consensus spatial template.
   - 1D RANSAC affine temporal pacing atlas ($K_e, \Delta t_0$).
   - Internal K-fold cross-validation across WT embryos to assemble pooled out-of-fold empirical nulls.
-  - Analytical Cholesky GP regression stripped to lightweight 100-point ribbons.
+  - Kronecker Separable Joint 3D Gaussian Process regression evaluated on canonical active domains $[0, \tau_{\text{cutoff}}]$.
 - **Stage 2 (Inference Pipeline)**:
-  - Spatial alignment to consensus template.
-  - Temporal alignment to canonical temporal atlas.
-  - 5-modality trajectory scoring:
-    1. **Temporal Shape**: Autonomous cell cycle duration deviation (*Z*<sub>temp_shape</sub>).
-    2. **Temporal Shift**: Lineage-propagated midpoint phase drift (*Z*<sub>temp_shift</sub>).
-    3. **Spatial Shift**: Center-of-mass Mahalanobis misplacement (*D*<sub>spat_shift</sub>).
-    4. **Spatial Shape**: GP trajectory path residual RMSE (*D*<sub>spat_shape</sub>).
-    5. **Spatiotemporal Warp**: Fisher-Rao geodesic pacing distance (*Z*<sub>warp</sub>).
-  - Empirical p-values against WT null distribution and per-embryo Benjamini-Hochberg FDR control.
+  - Spatial alignment to consensus template (Umeyama similarity registration).
+  - Temporal alignment to canonical temporal atlas (affine pacing $K_e$, timing offset $\Delta t_0$).
+  - **Symmetric 3 × 3 Spatiotemporal Anomaly Suite** (6 orthogonal modalities):
+    - *Temporal Domain*:
+      1. **Temporal Shape**: Autonomous cell cycle duration log-deviation ($Z_{\text{temp\_shape}}$).
+      2. **Temporal Shift**: Lineage-propagated birth time drift ($Z_{\text{temp\_shift}}$).
+      3. **Spatiotemporal Warp**: Monotonic pacing distortion ($\text{RMS}_{\text{warp}}$, $Z_{\text{warp}}$).
+    - *Spatial Domain*:
+      4. **Spatial Shift**: Center-of-mass Mahalanobis translation ($\mathcal{D}_{\text{spat\_shift}}$ via Joint GP $B$).
+      5. **Spatial Orientation**: Rigid $SO(3)$ Kabsch trajectory rotation angle ($\theta_{\text{rot}}$, $Z_{\text{rot\_angle}}$).
+      6. **Spatial Shape**: Intrinsic Kronecker GP path curvature residual ($\mathcal{M}_{\text{spat\_shape}}$).
+  - Cell-standardized empirical null calibration ($Z_c = \frac{s_c - \mu_c}{\sigma_c}$) and per-embryo Benjamini-Hochberg FDR control ($q < 0.05$).
 - **Visualization Suite (`spatiotemporal_atlas.viz`)**:
-  - Unified 5-panel Manhattan plots showing genome-wide anomaly significance per lineage clade.
-  - Paired reference vs. observed dual-lineage trees colored by instantaneous warping velocity $\dot{\gamma}(t)$.
-  - Embryo diagnostics dashboard (`visualize_embryo_diagnostics`).
+  - Unified 6-panel Manhattan plots showing genome-wide anomaly significance across modalities.
+  - Canonical Sulston-ordered dual-lineage trees colored by instantaneous warping velocity $\dot{\gamma}(t)$ with whole-embryo QC headers.
+  - 7-panel single-cell trajectory diagnostic dashboard (`plot_cell_trajectory_diagnostic_dashboard`) featuring:
+    - 3D spatial transformation panel (translation vector $\mathbf{T}$ and $SO(3)$ rotation triads $X, Y, Z \to X', Y', Z'$).
+    - True isometric 1:1:1 physical bounding boxes preserving 3D Euclidean angles and triad orthogonality.
+    - Pacing velocity $\dot{\gamma}(t)$ dot coloring on coordinate trajectories and monotonic warping curves.
+    - Canonical developmental lifespan intervals.
+  - Multi-embryo cohort 3D comparison visualizer (`plot_cell_cohort_3d_comparison`) with synchronized camera WebGL HTML export.
+  - Empirical null distribution visualizer (`plot_wt_null_metric_distributions`) comparing physical units (canonical minutes) vs. standardized scaled metrics.
 
 ---
 
@@ -83,10 +92,14 @@ cell_scores_df, embryo_qc_df = run_embryo_inference(
 ### 3. Visual Diagnostics Dashboard
 
 ```python
-from spatiotemporal_atlas.viz import visualize_embryo_diagnostics
+from spatiotemporal_atlas.viz import (
+    visualize_embryo_diagnostics,
+    plot_cell_trajectory_diagnostic_dashboard,
+)
 
+# Embryo-level 6-metric Manhattan plot & dual lineage tree
 fig_manhattan, fig_lineage = visualize_embryo_diagnostics(
-    target_embryo_id="20080508_pha-4_3E3C5_1yy_L2",
+    target_embryo_id="20080602_hnd-1_6_pop1i_L1",
     cell_scores=cell_scores_df,
     atlas_bundle=atlas,
     lineage_data=lineage_df,
@@ -94,6 +107,18 @@ fig_manhattan, fig_lineage = visualize_embryo_diagnostics(
     embryo_qc=embryo_qc_df,
     alpha=0.05,
     show=True,
+)
+
+# 7-panel single-cell trajectory diagnostic dashboard
+fig_dash, axes_dash = plot_cell_trajectory_diagnostic_dashboard(
+    cell_name="MSapa",
+    embryo_id="20080602_hnd-1_6_pop1i_L1",
+    pos_df=rnai_pos_df,
+    target_row=cell_scores_df[(cell_scores_df["cell"] == "MSapa") & (cell_scores_df["embryo_id"] == "20080602_hnd-1_6_pop1i_L1")].iloc[0],
+    cell_model=atlas["cell_models"]["MSapa"],
+    temporal_atlas=atlas["temporal_atlas"],
+    embryo_qc=embryo_qc_df,
+    save_interactive_html="MSapa_3d_interactive.html",
 )
 ```
 
