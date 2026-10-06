@@ -63,12 +63,18 @@ def _fit_and_score_single_cell_worker(
     if len(train_embs) < min_train_embryos:
         return [], None
 
+    train_ke_map = (
+        canon_train_df.groupby(embryo_col)["k_e"].first().to_dict()
+        if "k_e" in canon_train_df.columns
+        else {}
+    )
     train_tracks = {}
     for emb in train_embs:
         emb_df = sub_c[sub_c[embryo_col] == emb].sort_values(time_col)
         t_vals = emb_df[time_col].values.astype(float)
         t_birth = float(t_vals.min())
-        tau_vals = t_vals - t_birth
+        k_e = float(train_ke_map.get(emb, 1.0))
+        tau_vals = (t_vals - t_birth) / k_e
         valid_mask = tau_vals <= tau_cutoff + 1e-4
         if np.sum(valid_mask) < min_observations:
             continue
@@ -83,6 +89,7 @@ def _fit_and_score_single_cell_worker(
             "xyz_shape": xyz_shape,
             "com_xyz": com,
             "t_birth": t_birth,
+            "k_e": k_e,
             "n_frames": len(tau_obs),
         }
 
@@ -190,7 +197,8 @@ def _fit_and_score_single_cell_worker(
         emb_df = sub_c[sub_c[embryo_col] == te_id].sort_values(time_col)
         t_vals = emb_df[time_col].values.astype(float)
         t_birth = float(t_vals.min())
-        tau_vals = t_vals - t_birth
+        k_test = float(te_cell_row["k_e"].iloc[0]) if "k_e" in te_cell_row.columns else 1.0
+        tau_vals = (t_vals - t_birth) / k_test
         valid_mask = tau_vals <= tau_cutoff + 1e-4
         if np.sum(valid_mask) < min_observations:
             continue
@@ -264,7 +272,7 @@ def _fit_and_score_single_cell_worker(
         warp_met = compute_warp_metrics(gamma_test, active_tau_test, slopes_test)
         max_warp_min = warp_met["max_warp_min"]
         signed_warp_area = warp_met["signed_warp_area"]
-        z_warp = float((rms_warp_min - mu_warp) / (std_warp * np.sqrt(factor_pred)))
+        z_warp = float((rms_warp_min - mu_warp) / max(std_warp * np.sqrt(factor_pred), 1e-6))
 
         # 6. Spatial Shape Residuals in Warped Progression Coordinates
         u_eval = np.clip(gamma_test / max(tau_cutoff, 1e-3), 0.0, 1.0)
@@ -288,6 +296,7 @@ def _fit_and_score_single_cell_worker(
         cell_records.append({
             embryo_col: te_id,
             cell_col: c,
+            "k_test": k_test,
             "z_temp_shape": z_temp_shape,
             "delta_duration_min": delta_dur_min,
             "pct_duration_deviation": pct_dur_dev,
@@ -383,6 +392,7 @@ def score_embryos_batch_parallel(
     warping_lambda: float = 10.0,
     warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
     tau_percentile_cutoff: float = 95.0,
+    cycles_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, dict, dict]:
     """Coordinates parallel worker execution across blastomeres."""
     parent_map = parse_lineage_graph(lineage_df)
@@ -391,9 +401,12 @@ def score_embryos_batch_parallel(
     pos_work[embryo_col] = pos_work[embryo_col].astype(str)
     pos_work[cell_col] = pos_work[cell_col].astype(str).str.strip()
 
-    all_cycles = extract_cell_lifespans(
-        pos_work, time_col=time_col, embryo_col=embryo_col, cell_col=cell_col
-    )
+    if cycles_df is not None:
+        all_cycles = cycles_df.copy()
+    else:
+        all_cycles = extract_cell_lifespans(
+            pos_work, time_col=time_col, embryo_col=embryo_col, cell_col=cell_col
+        )
     all_cycles[embryo_col] = all_cycles[embryo_col].astype(str)
     all_cycles[cell_col] = all_cycles[cell_col].astype(str).str.strip()
 
@@ -415,10 +428,10 @@ def score_embryos_batch_parallel(
     if canon_train_df.empty or not temporal_atlas:
         return pd.DataFrame(), {}, {}
 
-    # Calculate empirical tau_cutoff (95th percentile) per cell type from WT training cohort
+    # Calculate empirical tau_cutoff (95th percentile) per cell type from WT training cohort in canonical minutes
     tau_cutoffs = {}
-    for cell_name, grp in train_cycles.groupby(cell_col):
-        durs = grp["duration"].dropna().values.astype(float)
+    for cell_name, grp in canon_train_df.groupby(cell_col):
+        durs = grp["canon_duration"].dropna().values.astype(float)
         if len(durs) >= 5:
             cutoff = float(np.percentile(durs, tau_percentile_cutoff))
         elif len(durs) > 0:
@@ -451,12 +464,14 @@ def score_embryos_batch_parallel(
                 max_inlier_dist_canon=max_inlier_dist_canon,
             )
             reg_meta_by_test[te_id] = r_meta
+            c_df["k_e"] = r_meta["k_test"]
             canon_test_by_embryo[te_id] = c_df
         except ValueError:
             continue
 
     unique_cells = list(canon_train_df[cell_col].unique())
-    cell_subsets = {c: pos_work[pos_work[cell_col] == c].copy() for c in unique_cells}
+    req_cols = [embryo_col, cell_col, time_col] + list(spatial_cols)
+    cell_subsets = {c: pos_work.loc[pos_work[cell_col] == c, req_cols].copy() for c in unique_cells}
 
     tasks = (
         joblib.delayed(_fit_and_score_single_cell_worker)(

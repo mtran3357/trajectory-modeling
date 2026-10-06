@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 
 from ..geometry.gpa import compute_gpa_consensus_atlas
 from ..geometry.align import align_embryo_to_spatial_template
+from ..temporal.lifespans import extract_cell_lifespans
 from ..models.parallel import score_embryos_batch_parallel
 
 
@@ -122,6 +123,13 @@ def build_wt_reference_atlas(
         wt_spatial_reg_meta[emb_id] = r_meta
 
     pos_df_aligned = pd.concat(aligned_frames, axis=0, ignore_index=True)
+    del aligned_frames
+    gc.collect()
+
+    # Pre-extract lifespans once across all WT embryos (avoids recomputing in each fold)
+    all_cycles = extract_cell_lifespans(
+        pos_df_aligned, time_col=time_col, embryo_col=embryo_col, cell_col=cell_col
+    )
 
     # 4. Build empirical OOF null model via internal K-fold CV across WT embryos
     all_wt_embryos = np.array(pos_df_aligned[embryo_col].dropna().unique())
@@ -136,6 +144,7 @@ def build_wt_reference_atlas(
     ):
         inner_train = list(all_wt_embryos[tr_idx])
         inner_val = list(all_wt_embryos[val_idx])
+        print(f"  --> [Null Fold {fold_idx + 1}/{actual_splits}] Training on {len(inner_train)} embryos, scoring {len(inner_val)} held-out embryos...", flush=True)
 
         raw_val_df, _, _ = score_embryos_batch_parallel(
             test_embryo_ids=inner_val,
@@ -158,7 +167,10 @@ def build_wt_reference_atlas(
             warping_lambda=warping_lambda,
             warping_slope_bounds=warping_slope_bounds,
             tau_percentile_cutoff=tau_percentile_cutoff,
+            cycles_df=all_cycles,
         )
+
+        print(f"  <-- [Null Fold {fold_idx + 1}/{actual_splits}] Completed: {len(raw_val_df)} held-out blastomere scores evaluated.", flush=True)
 
         if raw_val_df.empty:
             continue
@@ -177,7 +189,7 @@ def build_wt_reference_atlas(
             })
 
     oof_null_df = pd.DataFrame(null_records)
-    print(f"  Pooled OOF null model assembled: {len(oof_null_df)} blastomere observations.")
+    print(f"  Pooled OOF null model assembled: {len(oof_null_df)} blastomere observations.", flush=True)
     gc.collect()
 
     # 5. Fit final reference trajectory models on 100% of WT embryos
@@ -203,6 +215,7 @@ def build_wt_reference_atlas(
         warping_lambda=warping_lambda,
         warping_slope_bounds=warping_slope_bounds,
         tau_percentile_cutoff=tau_percentile_cutoff,
+        cycles_df=all_cycles,
     )
 
     atlas_bundle = {

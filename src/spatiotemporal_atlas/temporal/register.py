@@ -66,6 +66,8 @@ def register_embryo_to_temporal_atlas(
     canon_df["canon_duration"] = canon_df["canon_divide"] - canon_df["canon_birth"]
     canon_df["canon_mid"] = 0.5 * (canon_df["canon_birth"] + canon_df["canon_divide"])
     canon_df["canon_log_dur"] = np.log(canon_df["canon_duration"])
+    canon_df["k_e"] = k_test
+    canon_df["dt0_e"] = dt0_test
 
     # Error diagnostics
     pct_dur_errors = []
