@@ -6,29 +6,29 @@ A modular framework for constructing 4D spatiotemporal atlases of *C. elegans* e
 
 - **Stage 1 (Atlas Building)**:
   - Scale-normalized Generalized Procrustes Analysis (GPA) consensus spatial template.
-  - 1D RANSAC affine temporal pacing atlas ($K_e, \Delta t_0$).
+  - 1D RANSAC affine temporal pacing atlas (*K*<sub>e</sub>, Δ*t*<sub>0</sub>).
   - Internal K-fold cross-validation across WT embryos to assemble pooled out-of-fold empirical nulls.
-  - Kronecker Separable Joint 3D Gaussian Process regression evaluated on canonical active domains $[0, \tau_{\text{cutoff}}]$.
+  - Kronecker Separable Joint 3D Gaussian Process regression evaluated on canonical active domains [0, *τ*<sub>cutoff</sub>].
 - **Stage 2 (Inference Pipeline)**:
   - Spatial alignment to consensus template (Umeyama similarity registration).
-  - Temporal alignment to canonical temporal atlas (affine pacing $K_e$, timing offset $\Delta t_0$).
+  - Temporal alignment to canonical temporal atlas (affine pacing *K*<sub>e</sub>, timing offset Δ*t*<sub>0</sub>).
   - **Symmetric 3 × 3 Spatiotemporal Anomaly Suite** (6 orthogonal modalities):
     - *Temporal Domain*:
-      1. **Temporal Shape**: Autonomous cell cycle duration log-deviation ($Z_{\text{temp\_shape}}$).
-      2. **Temporal Shift**: Lineage-propagated birth time drift ($Z_{\text{temp\_shift}}$).
-      3. **Spatiotemporal Warp**: Monotonic pacing distortion ($\text{RMS}_{\text{warp}}$, $Z_{\text{warp}}$).
+      1. **Temporal Shape**: Autonomous cell cycle duration log-deviation (*Z*<sub>temp_shape</sub>).
+      2. **Temporal Shift**: Lineage-propagated birth time drift (*Z*<sub>temp_shift</sub>).
+      3. **Spatiotemporal Warp**: Monotonic pacing distortion (RMS<sub>warp</sub>, *Z*<sub>warp</sub>).
     - *Spatial Domain*:
-      4. **Spatial Shift**: Center-of-mass Mahalanobis translation ($\mathcal{D}_{\text{spat\_shift}}$ via Joint GP $B$).
-      5. **Spatial Orientation**: Rigid $SO(3)$ Kabsch trajectory rotation angle ($\theta_{\text{rot}}$, $Z_{\text{rot\_angle}}$).
-      6. **Spatial Shape**: Intrinsic Kronecker GP path curvature residual ($\mathcal{M}_{\text{spat\_shape}}$).
-  - Cell-standardized empirical null calibration ($Z_c = \frac{s_c - \mu_c}{\sigma_c}$) and per-embryo Benjamini-Hochberg FDR control ($q < 0.05$).
+      4. **Spatial Shift**: Center-of-mass Mahalanobis translation (*D*<sub>spat_shift</sub> via Joint GP *B*).
+      5. **Spatial Orientation**: Rigid SO(3) Kabsch trajectory rotation angle (*θ*<sub>rot</sub>, *Z*<sub>rot_angle</sub>).
+      6. **Spatial Shape**: Intrinsic Kronecker GP path curvature residual (*M*<sub>spat_shape</sub>).
+  - Cell-standardized empirical null calibration (*Z*<sub>c</sub> = (*s*<sub>c</sub> − *μ*<sub>c</sub>) / *σ*<sub>c</sub>) and per-embryo Benjamini-Hochberg FDR control (*q* < 0.05).
 - **Visualization Suite (`spatiotemporal_atlas.viz`)**:
   - Unified 6-panel Manhattan plots showing genome-wide anomaly significance across modalities.
-  - Canonical Sulston-ordered dual-lineage trees colored by instantaneous warping velocity $\dot{\gamma}(t)$ with whole-embryo QC headers.
+  - Canonical Sulston-ordered dual-lineage trees colored by instantaneous warping velocity *γ̇*(*t*) with whole-embryo QC headers.
   - 7-panel single-cell trajectory diagnostic dashboard (`plot_cell_trajectory_diagnostic_dashboard`) featuring:
-    - 3D spatial transformation panel (translation vector $\mathbf{T}$ and $SO(3)$ rotation triads $X, Y, Z \to X', Y', Z'$).
+    - 3D spatial transformation panel (translation vector **T** and SO(3) rotation triads X, Y, Z → X', Y', Z').
     - True isometric 1:1:1 physical bounding boxes preserving 3D Euclidean angles and triad orthogonality.
-    - Pacing velocity $\dot{\gamma}(t)$ dot coloring on coordinate trajectories and monotonic warping curves.
+    - Pacing velocity *γ̇*(*t*) dot coloring on coordinate trajectories and monotonic warping curves.
     - Canonical developmental lifespan intervals.
   - Multi-embryo cohort 3D comparison visualizer (`plot_cell_cohort_3d_comparison`) with synchronized camera WebGL HTML export.
   - Empirical null distribution visualizer (`plot_wt_null_metric_distributions`) comparing physical units (canonical minutes) vs. standardized scaled metrics.
