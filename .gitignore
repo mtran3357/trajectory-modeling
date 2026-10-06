@@ -1,5 +1,6 @@
 # Ignore all local analysis, scratchpads, and exploratory notebooks
 analysis/
+scratch/
 
 # Ignore all data directories
 data/

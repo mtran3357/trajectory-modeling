@@ -115,6 +115,7 @@ def plot_warping_velocity_dual_lineage(
     lineage_df: pd.DataFrame,
     query_pos_df: pd.DataFrame | None = None,
     atlas_bundle: dict | ReferenceAtlas | None = None,
+    computed_gamma_dots: dict | None = None,
     dx_offset: float = 0.32,
     figsize: tuple[float, float] | None = None,
     base_height: float = 15.0,
@@ -150,7 +151,7 @@ def plot_warping_velocity_dual_lineage(
         calc_width = max(26.0, len(x_coords) * width_per_cell)
         figsize = (calc_width, base_height)
 
-    computed_gamma_dots = {}
+    computed_gamma_dots = dict(computed_gamma_dots) if computed_gamma_dots is not None else {}
     time_grid = np.linspace(0.0, 1.0, 40)
 
     # Compute gamma_dot(t) for observed tracks if query coordinate data is supplied
@@ -176,6 +177,14 @@ def plot_warping_velocity_dual_lineage(
             emb_pos = emb_pos_aligned
 
         if all(col in emb_pos.columns for col in aligned_cols):
+            k_test = 1.0
+            if "k_test" in test_results_df.columns:
+                k_test = float(test_results_df["k_test"].iloc[0])
+            elif "k_e" in test_results_df.columns:
+                k_test = float(test_results_df["k_e"].iloc[0])
+            elif calib_meta and "k_test" in calib_meta:
+                k_test = float(calib_meta["k_test"])
+
             for c in valid_cells:
                 if c in cell_models:
                     model_dict = cell_models[c].to_dict() if hasattr(cell_models[c], "to_dict") else cell_models[c]
@@ -187,7 +196,7 @@ def plot_warping_velocity_dual_lineage(
                         if len(c_sub) >= 3:
                             t_vals = c_sub[t_key].values.astype(float)
                             t_birth = float(t_vals.min())
-                            tau_vals = t_vals - t_birth
+                            tau_vals = (t_vals - t_birth) / k_test
                             valid_mask = tau_vals <= tau_cutoff + 1e-4
                             if np.sum(valid_mask) >= 3:
                                 tau_test = tau_vals[valid_mask]

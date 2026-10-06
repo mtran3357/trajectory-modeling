@@ -153,7 +153,8 @@ def run_embryo_inference(
             emb_cell_df = aligned_q[aligned_q[cell_col] == c_name].sort_values(time_col)
             t_vals = emb_cell_df[time_col].values.astype(float)
             t_birth = float(t_vals.min())
-            tau_vals = t_vals - t_birth
+            k_test = float(t_meta.get("k_test", 1.0))
+            tau_vals = (t_vals - t_birth) / k_test
             valid_mask = tau_vals <= tau_cutoff + 1e-4
             if np.sum(valid_mask) < min_observations:
                 continue
