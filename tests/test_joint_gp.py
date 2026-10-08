@@ -53,6 +53,12 @@ def test_joint_gp_fit_and_prediction():
     assert var_t.shape == (100,)
     assert cov_3d.shape == (100, 3, 3)
 
+    # Test return_cov=False fast mean-only path
+    mu_fast, var_fast, cov_fast = predict_kronecker_joint_gp(model, s_dense, return_cov=False)
+    assert np.allclose(mu_fast, mu_pred)
+    assert var_fast is None
+    assert cov_fast is None
+
     # Check Mahalanobis residual calculation on test points
     d_spat_shape, rmse = compute_3d_mahalanobis_residuals(Y[:10], mu_pred[:10], cov_3d[:10])
     assert d_spat_shape >= 0.0
@@ -141,4 +147,63 @@ def test_extract_joint_trajectory_ribbon_serialization():
     assert np.allclose(ribbon_restored.dense_mu_3d, ribbon.dense_mu_3d)
     assert np.allclose(ribbon_restored.dense_cov_3d, ribbon.dense_cov_3d)
     assert np.allclose(ribbon_restored.B_cov, ribbon.B_cov)
+    assert ribbon_restored.length_scale == ribbon.length_scale
+    assert ribbon_restored.noise_level == ribbon.noise_level
+
+
+def test_full_joint_mahalanobis_residuals():
+    """Verify full joint GP Mahalanobis residual properties: zero residual, smoothness sensitivity."""
+    from spatiotemporal_atlas.models.joint_gp import compute_full_joint_mahalanobis_residuals
+
+    T = 20
+    u_eval = np.linspace(0.0, 1.0, T)
+    mu_pred = np.zeros((T, 3))
+    B = np.eye(3) * 2.0
+
+    # 1. Exact match produces zero distance
+    d_zero, rmse_zero = compute_full_joint_mahalanobis_residuals(
+        Y_observed=mu_pred,
+        mu_pred=mu_pred,
+        B=B,
+        u_eval=u_eval,
+        length_scale=0.3,
+        noise_level=0.1,
+    )
+    assert np.isclose(d_zero, 0.0)
+    assert np.isclose(rmse_zero, 0.0)
+
+    # 2. Smooth coherent drift vs high-frequency oscillation with identical Euclidean RMSE
+    # Smooth drift: low curvature
+    smooth_y = 1.0 * np.sin(np.pi * u_eval)[:, None] * np.ones((1, 3))
+    # Oscillating signal: high frequency alternating signs
+    osc_signs = np.array([1.0, -1.0] * (T // 2))[:, None]
+    osc_y = 1.0 * osc_signs * np.ones((1, 3))
+
+    # Match Euclidean norms exactly
+    norm_smooth = np.sqrt(np.mean(smooth_y ** 2))
+    norm_osc = np.sqrt(np.mean(osc_y ** 2))
+    smooth_y = smooth_y * (norm_osc / norm_smooth)
+
+    d_smooth, rmse_smooth = compute_full_joint_mahalanobis_residuals(
+        Y_observed=smooth_y,
+        mu_pred=mu_pred,
+        B=B,
+        u_eval=u_eval,
+        length_scale=0.3,
+        noise_level=0.05,
+    )
+    d_osc, rmse_osc = compute_full_joint_mahalanobis_residuals(
+        Y_observed=osc_y,
+        mu_pred=mu_pred,
+        B=B,
+        u_eval=u_eval,
+        length_scale=0.3,
+        noise_level=0.05,
+    )
+
+    # Both have the same Euclidean RMSE
+    assert np.isclose(rmse_smooth, rmse_osc, rtol=1e-4)
+
+    # High frequency oscillation violates temporal continuity and receives significantly higher penalty!
+    assert d_osc > d_smooth * 1.5
 

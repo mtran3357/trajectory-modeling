@@ -52,7 +52,7 @@ class TrajectoryConfig:
     n_dense_samples: int = 100
     optimizer: str | None = None
     local_trajectory_alignment: bool = True
-    warping_lambda: float = 10.0
+    warping_lambda: float = 1.0
     warping_slope_bounds: tuple[float, float] = (0.5, 2.0)
     tau_percentile_cutoff: float = 95.0
 

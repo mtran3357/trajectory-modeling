@@ -159,7 +159,7 @@ def _prepare_trajectory_dashboard_data(
         coords_aligned=coords_aligned,
         template_curve=template_curve,
         tau_grid=tau_grid,
-        lambda_reg=10.0,
+        lambda_reg=float(model_dict.get("warping_lambda", 1.0)),
         slope_bounds=(0.5, 2.0),
     )
     active_tau_grid = tau_grid[tau_grid <= tau_active.max() + 1e-4]

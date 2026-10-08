@@ -29,9 +29,10 @@ def build_wt_reference_atlas(
     noise_level: float = 1.0,
     random_state: int = 42,
     local_trajectory_alignment: bool = True,
-    warping_lambda: float = 10.0,
+    warping_lambda: float = 1.0,
     warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
     tau_percentile_cutoff: float = 95.0,
+    shape_metric_mode: str = "pointwise_marginal",
 ) -> dict:
 
     """Builds the complete WT reference atlas: consensus spatial template, 1D RANSAC
@@ -168,6 +169,7 @@ def build_wt_reference_atlas(
             warping_slope_bounds=warping_slope_bounds,
             tau_percentile_cutoff=tau_percentile_cutoff,
             cycles_df=all_cycles,
+            shape_metric_mode=shape_metric_mode,
         )
 
         print(f"  <-- [Null Fold {fold_idx + 1}/{actual_splits}] Completed: {len(raw_val_df)} held-out blastomere scores evaluated.", flush=True)
@@ -216,6 +218,7 @@ def build_wt_reference_atlas(
         warping_slope_bounds=warping_slope_bounds,
         tau_percentile_cutoff=tau_percentile_cutoff,
         cycles_df=all_cycles,
+        shape_metric_mode=shape_metric_mode,
     )
 
     atlas_bundle = {
@@ -239,6 +242,7 @@ def build_wt_reference_atlas(
         "warping_lambda": warping_lambda,
         "warping_slope_bounds": list(warping_slope_bounds),
         "tau_percentile_cutoff": tau_percentile_cutoff,
+        "shape_metric_mode": shape_metric_mode,
     }
 
 

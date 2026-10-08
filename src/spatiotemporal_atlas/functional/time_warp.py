@@ -9,7 +9,7 @@ def regularized_monotonic_time_warp(
     coords_aligned: np.ndarray,
     template_curve: np.ndarray,
     tau_grid: np.ndarray,
-    lambda_reg: float = 10.0,
+    lambda_reg: float = 1.0,
     slope_bounds: tuple[float, float] = (0.5, 2.0),
 ) -> tuple[np.ndarray, float, np.ndarray]:
     """Optimizes a regularized monotonic time-warping function gamma(tau) aligning
@@ -33,7 +33,7 @@ def regularized_monotonic_time_warp(
         Consensus reference template curve evaluated on tau_grid.
     tau_grid : np.ndarray of shape (K,)
         Uniform evaluation grid in [0, tau_max].
-    lambda_reg : float, default=10.0
+    lambda_reg : float, default=1.0
         Regularization penalty strength on velocity deviation from unit speed.
     slope_bounds : tuple[float, float], default=(0.5, 2.0)
         Allowable instantaneous pacing bounds [s_min, s_max].

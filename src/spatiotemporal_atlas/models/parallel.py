@@ -20,6 +20,7 @@ from .joint_gp import (
     fit_kronecker_joint_gp,
     predict_kronecker_joint_gp,
     compute_3d_mahalanobis_residuals,
+    compute_full_joint_mahalanobis_residuals,
     extract_joint_trajectory_ribbon,
 )
 
@@ -50,8 +51,9 @@ def _fit_and_score_single_cell_worker(
     model_type: str = "joint_gp",
     n_dense_samples: int = 100,
     local_trajectory_alignment: bool = True,
-    warping_lambda: float = 10.0,
+    warping_lambda: float = 1.0,
     warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
+    shape_metric_mode: str = "pointwise_marginal",
 ) -> tuple[list[dict], dict | None]:
     """Fits analytical GP + regularized time-warping models for one blastomere and scores test tracks."""
     embs_present = set(sub_c[embryo_col].unique())
@@ -279,8 +281,19 @@ def _fit_and_score_single_cell_worker(
         xyz_eval = np.column_stack([np.interp(gamma_test, tau_test, coords_aligned[:, d]) for d in range(3)])
 
         if model_type == "joint_gp" and joint_model is not None:
-            pred_mu_xyz, _, cov_3d_test = predict_kronecker_joint_gp(joint_model, u_eval)
-            d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(xyz_eval, pred_mu_xyz, cov_3d_test)
+            if shape_metric_mode == "full_joint_gp":
+                pred_mu_xyz, _, _ = predict_kronecker_joint_gp(joint_model, u_eval, return_cov=False)
+                d_spat_shape, rmse_3d_um = compute_full_joint_mahalanobis_residuals(
+                    Y_observed=xyz_eval,
+                    mu_pred=pred_mu_xyz,
+                    B=joint_model["B"],
+                    u_eval=u_eval,
+                    length_scale=length_scale,
+                    noise_level=noise_level,
+                )
+            else:
+                pred_mu_xyz, _, cov_3d_test = predict_kronecker_joint_gp(joint_model, u_eval)
+                d_spat_shape, rmse_3d_um = compute_3d_mahalanobis_residuals(xyz_eval, pred_mu_xyz, cov_3d_test)
         else:
             delta2 = np.zeros(len(u_eval))
             pred_mu_xyz = np.zeros_like(xyz_eval)
@@ -389,10 +402,11 @@ def score_embryos_batch_parallel(
     desc: str = "Fitting Cells",
     max_inlier_dist_canon: float = 5.0,
     local_trajectory_alignment: bool = True,
-    warping_lambda: float = 10.0,
+    warping_lambda: float = 1.0,
     warping_slope_bounds: tuple[float, float] = (0.5, 2.0),
     tau_percentile_cutoff: float = 95.0,
     cycles_df: pd.DataFrame | None = None,
+    shape_metric_mode: str = "pointwise_marginal",
 ) -> tuple[pd.DataFrame, dict, dict]:
     """Coordinates parallel worker execution across blastomeres."""
     parent_map = parse_lineage_graph(lineage_df)
@@ -501,6 +515,7 @@ def score_embryos_batch_parallel(
             local_trajectory_alignment=local_trajectory_alignment,
             warping_lambda=warping_lambda,
             warping_slope_bounds=warping_slope_bounds,
+            shape_metric_mode=shape_metric_mode,
         )
         for c in unique_cells
     )
