@@ -640,3 +640,83 @@ def test_plot_wt_null_metric_distributions():
         plt.close(fig)
 
 
+def test_compute_cohort_differential_stats_and_manhattan():
+    """Verify cohort-level two-sample Wilcoxon differential statistics and Manhattan plot."""
+    import tempfile
+    from spatiotemporal_atlas.viz import (
+        compute_cohort_differential_stats,
+        plot_cohort_differential_manhattan,
+    )
+
+    np.random.seed(42)
+    cells = ["ABala", "ABalp", "MSa", "MSp"]
+    n_query_per_cell = 10
+    n_null_per_cell = 20
+
+    query_rows = []
+    for cell in cells:
+        for i in range(n_query_per_cell):
+            shift_mean = 3.0 if "MS" in cell else 1.0
+            query_rows.append({
+                "embryo_id": f"q_emb_{i}",
+                "cell": cell,
+                "z_temp_shape": np.random.normal(shift_mean, 1.0),
+                "z_temp_shift": np.random.normal(shift_mean, 1.0),
+                "rms_warp_min": np.random.normal(shift_mean, 0.5),
+                "d_spat_shift": np.random.normal(shift_mean, 0.5),
+                "rot_angle_deg": np.random.normal(45.0, 10.0),
+                "d_spat_shape": np.random.normal(shift_mean, 0.5),
+                "pct_duration_deviation": shift_mean * 20.0,
+                "delta_midpoint_min": shift_mean * 5.0,
+                "com_shift_um": shift_mean * 1.5,
+                "rmse_3d_um": shift_mean * 1.2,
+            })
+    query_df = pd.DataFrame(query_rows)
+
+    null_rows = []
+    for cell in cells:
+        for i in range(n_null_per_cell):
+            null_rows.append({
+                "null_embryo_id": f"null_emb_{i}",
+                "cell": cell,
+                "emp_temp_shape": np.abs(np.random.normal(0.0, 1.0)),
+                "emp_temp_shift": np.abs(np.random.normal(0.0, 1.0)),
+                "emp_warp": np.abs(np.random.normal(0.5, 0.2)),
+                "emp_spat_shift": np.abs(np.random.normal(0.8, 0.3)),
+                "emp_rot_angle": np.abs(np.random.normal(25.0, 8.0)),
+                "emp_spat_shape": np.abs(np.random.normal(0.6, 0.2)),
+                "pct_duration_deviation": 5.0,
+                "delta_midpoint_min": 1.0,
+                "com_shift_um": 0.8,
+                "rmse_3d_um": 0.6,
+            })
+    null_df = pd.DataFrame(null_rows)
+
+    diff_df = compute_cohort_differential_stats(query_df, null_df, alpha=0.05)
+    assert len(diff_df) == len(cells)
+    assert "pval_spat_shape" in diff_df.columns
+    assert "qval_spat_shape" in diff_df.columns
+    assert "hit_bh_spat_shape" in diff_df.columns
+    assert "hit_nom_spat_shape" in diff_df.columns
+
+    # Verify that MS cells with shift_mean=3.0 show strong significance
+    ms_rows = diff_df[diff_df["cell"].str.startswith("MS")]
+    assert all(ms_rows["pval_spat_shape"] < 0.05)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fig, axes = plot_cohort_differential_manhattan(
+            diff_stats_df=diff_df,
+            alpha=0.05,
+            top_n_labels=2,
+            cohort_name="MockCohort",
+            figsize=(12.0, 15.0),
+            dpi=80,
+        )
+        assert fig is not None
+        assert len(axes) == 6
+        out_png = Path(tmp_dir) / "test_cohort_manhattan.png"
+        fig.savefig(out_png, bbox_inches="tight")
+        assert out_png.exists()
+        plt.close(fig)
+
+

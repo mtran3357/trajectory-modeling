@@ -10,7 +10,7 @@ from ..lineage.graph import parse_lineage_graph, get_ancestral_path_in_interval
 from ..temporal.lifespans import extract_cell_lifespans
 from ..temporal.register import register_embryo_to_temporal_atlas
 from ..stats.calibration import apply_empirical_calibration_to_inference
-from ..models.joint_gp import compute_3d_mahalanobis_residuals
+from ..models.joint_gp import compute_3d_mahalanobis_residuals, compute_full_joint_mahalanobis_residuals
 from ..geometry.curve_align import register_curve_to_template
 from ..types import ReferenceAtlas, TrajectoryRibbon
 
@@ -24,6 +24,8 @@ def run_embryo_inference(
     min_observations: int = 3,
     max_inlier_dist_canon: float | None = None,
     n_jobs: int = 1,
+    shape_metric_mode: str = "pointwise_marginal",
+    warping_lambda: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Executes spatiotemporal inference for query embryos against pre-fit WT atlas.
     
@@ -43,6 +45,10 @@ def run_embryo_inference(
         Maximum inlier cutoff for 1D temporal RANSAC.
     n_jobs : int, default=1
         Worker count (reserved for batch inference).
+    shape_metric_mode : str, default="pointwise_marginal"
+        Trajectory shape metric calculation mode.
+    warping_lambda : float or None, default=None
+        Time-warping regularization parameter (if None, reads from bundle, default 1.0).
         
     Returns
     -------
@@ -66,13 +72,16 @@ def run_embryo_inference(
     oof_null_df = bundle["oof_null_df"]
     max_inlier_dist_um = bundle["max_inlier_dist_um"]
     local_trajectory_alignment = bundle.get("local_trajectory_alignment", True)
-    warping_lambda = float(bundle.get("warping_lambda", 10.0))
+    warping_lambda = float(warping_lambda if warping_lambda is not None else bundle.get("warping_lambda", 1.0))
     warping_slope_bounds = tuple(bundle.get("warping_slope_bounds", (0.5, 2.0)))
     tau_cutoffs = bundle.get("tau_cutoffs", {})
 
 
     if max_inlier_dist_canon is None:
         max_inlier_dist_canon = bundle.get("max_inlier_dist_canon", 5.0)
+
+    if shape_metric_mode == "pointwise_marginal" and "shape_metric_mode" in bundle:
+        shape_metric_mode = bundle["shape_metric_mode"]
 
     # 1. Scale physical coordinates
     df = query_pos_df.copy()
@@ -243,7 +252,22 @@ def run_embryo_inference(
             u_eval = np.clip(gamma_test / max(tau_cutoff, 1e-3), 0.0, 1.0)
             xyz_eval = np.column_stack([np.interp(gamma_test, tau_test, coords_aligned[:, d]) for d in range(3)])
 
-            if m_info.get("dense_cov_3d") is not None and m_info.get("dense_mu_3d") is not None:
+            if shape_metric_mode == "full_joint_gp" and m_info.get("B_cov") is not None and m_info.get("dense_mu_3d") is not None:
+                grid_u = m_info["s_dense"]
+                pred_mu_xyz = interp1d(
+                    grid_u, m_info["dense_mu_3d"], axis=0, kind="linear", fill_value="extrapolate"
+                )(u_eval)
+                length_scale = float(m_info.get("length_scale", 0.3))
+                noise_level = float(m_info.get("noise_level", 0.1))
+                d_spat_shape, rmse_3d_um = compute_full_joint_mahalanobis_residuals(
+                    Y_observed=xyz_eval,
+                    mu_pred=pred_mu_xyz,
+                    B=m_info["B_cov"],
+                    u_eval=u_eval,
+                    length_scale=length_scale,
+                    noise_level=noise_level,
+                )
+            elif m_info.get("dense_cov_3d") is not None and m_info.get("dense_mu_3d") is not None:
                 grid_u = m_info["s_dense"]
                 pred_mu_xyz = interp1d(
                     grid_u, m_info["dense_mu_3d"], axis=0, kind="linear", fill_value="extrapolate"

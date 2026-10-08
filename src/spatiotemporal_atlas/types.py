@@ -66,6 +66,8 @@ class TrajectoryRibbon:
     tau_cutoff: float = 0.0
     mu_warp_min: float = 0.0
     std_warp_min: float = 1.0
+    length_scale: float = 0.3
+    noise_level: float = 0.1
 
     def __getitem__(self, item: str):
         return getattr(self, item)
@@ -99,6 +101,8 @@ class TrajectoryRibbon:
             "tau_cutoff": self.tau_cutoff,
             "mu_warp_min": self.mu_warp_min,
             "std_warp_min": self.std_warp_min,
+            "length_scale": self.length_scale,
+            "noise_level": self.noise_level,
         }
         if self.dense_mu_3d is not None:
             d["dense_mu_3d"] = self.dense_mu_3d
@@ -132,6 +136,8 @@ class TrajectoryRibbon:
             tau_cutoff=float(d.get("tau_cutoff", 0.0)),
             mu_warp_min=float(d.get("mu_warp_min", 0.0)),
             std_warp_min=float(d.get("std_warp_min", 1.0)),
+            length_scale=float(d.get("length_scale", 0.3)),
+            noise_level=float(d.get("noise_level", 0.1)),
         )
 
 

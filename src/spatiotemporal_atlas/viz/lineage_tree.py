@@ -213,7 +213,7 @@ def plot_warping_velocity_dual_lineage(
                                     coords_aligned=coords_aligned,
                                     template_curve=template_curve,
                                     tau_grid=tau_grid,
-                                    lambda_reg=float(bundle.get("warping_lambda", 10.0)) if bundle else 10.0,
+                                    lambda_reg=float(bundle.get("warping_lambda", 1.0)) if bundle else 1.0,
                                 )
                                 active_tau = tau_grid[tau_grid <= tau_test.max() + 1e-4]
                                 g_dot = np.maximum(np.gradient(gamma_test, active_tau), 0.0)

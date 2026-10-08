@@ -81,7 +81,8 @@ def fit_kronecker_joint_gp(
 def predict_kronecker_joint_gp(
     model: dict,
     s_query: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return_cov: bool = True,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
     """Evaluates the Kronecker joint GP at query times s_query.
     
     Parameters
@@ -90,15 +91,18 @@ def predict_kronecker_joint_gp(
         Fitted model dictionary from fit_kronecker_joint_gp.
     s_query : np.ndarray
         Query timepoints of shape (M,) or (M, 1) in [0, 1].
+    return_cov : bool, default=True
+        Whether to compute and return predictive temporal variance and 3D spatial covariance.
+        If False, returns (mu_pred, None, None) bypassing Cholesky triangular solve.
         
     Returns
     -------
     mu_pred : np.ndarray
         Predicted mean coordinates of shape (M, 3).
-    var_temporal : np.ndarray
-        Marginal temporal variance scalar per point of shape (M,).
-    cov_3d : np.ndarray
-        Full 3D spatial covariance tensor of shape (M, 3, 3).
+    var_temporal : np.ndarray or None
+        Marginal temporal variance scalar per point of shape (M,), or None if return_cov=False.
+    cov_3d : np.ndarray or None
+        Full 3D spatial covariance tensor of shape (M, 3, 3), or None if return_cov=False.
     """
     s_q = s_query.reshape(-1, 1).astype(np.float64)
     s_train = model["s_train"]
@@ -113,6 +117,9 @@ def predict_kronecker_joint_gp(
 
     # Predicted mean: mu_* = K_star.T @ alpha (M, 3)
     mu_pred = (K_star.T @ alpha).astype(np.float32)
+
+    if not return_cov:
+        return mu_pred, None, None
 
     # Predictive temporal variance: v = L_T^{-1} @ K_star
     v = solve_triangular(L_T, K_star, lower=True)
@@ -171,6 +178,81 @@ def compute_3d_mahalanobis_residuals(
     return d_spat_shape, rmse_3d_um
 
 
+def compute_full_joint_mahalanobis_residuals(
+    Y_observed: np.ndarray,
+    mu_pred: np.ndarray,
+    B: np.ndarray,
+    u_eval: np.ndarray,
+    length_scale: float = 0.3,
+    noise_level: float = 0.1,
+    ridge_eps: float = 1e-4,
+) -> tuple[float, float]:
+    """Computes full Kronecker Joint GP Trajectory Mahalanobis residual distance and Euclidean RMSE.
+    
+    Under the Kronecker separable model K_joint = B (x) Sigma_T,
+    D_joint^2 = Tr( B^{-1} @ E.T @ Sigma_T^{-1} @ E )
+    d_spat_shape = sqrt( max(D_joint^2, 0) / (3 * T) )
+    
+    Parameters
+    ----------
+    Y_observed : np.ndarray
+        Observed coordinates of shape (T, 3).
+    mu_pred : np.ndarray
+        Predicted mean coordinates of shape (T, 3).
+    B : np.ndarray
+        Spatial covariance matrix of shape (3, 3).
+    u_eval : np.ndarray
+        Progression coordinates of shape (T,) in [0, 1].
+    length_scale : float, default=0.3
+        Temporal Matérn 5/2 lengthscale.
+    noise_level : float, default=0.1
+        Observation noise variance.
+    ridge_eps : float, default=1e-4
+        Numerical regularization ridge.
+        
+    Returns
+    -------
+    d_spat_shape : float
+        Normalized trajectory Mahalanobis residual distance.
+    rmse_3d_um : float
+        Euclidean 3D RMSE in microns.
+    """
+    diff = (Y_observed - mu_pred).astype(np.float64)
+    T = len(diff)
+    if T == 0:
+        return 0.0, 0.0
+
+    rmse_3d_um = float(np.sqrt(np.mean(np.sum(diff ** 2, axis=1))))
+
+    # Prior Temporal Covariance: Sigma_T = K_T(u, u) + (noise_level + ridge_eps) * I_T
+    u = u_eval.reshape(-1, 1).astype(np.float64)
+    K_T = matern52_kernel(u, u, length_scale=length_scale)
+    Sigma_T = K_T + (noise_level + ridge_eps) * np.eye(T, dtype=np.float64)
+
+    # Solve Sigma_T^{-1} @ diff via Cholesky
+    try:
+        L_T = np.linalg.cholesky(Sigma_T)
+        v = solve_triangular(L_T, diff, lower=True)
+        A = solve_triangular(L_T.T, v, lower=False)
+    except np.linalg.LinAlgError:
+        Sigma_T += 1e-3 * np.eye(T, dtype=np.float64)
+        A = np.linalg.lstsq(Sigma_T, diff, rcond=None)[0]
+
+    quad_spatial = diff.T @ A  # (3, 3)
+
+    # Spatial precision solve with B (3, 3)
+    B_reg = B.astype(np.float64) + ridge_eps * np.eye(3, dtype=np.float64)
+    try:
+        inv_B = np.linalg.inv(B_reg)
+        D2_joint = float(np.trace(inv_B @ quad_spatial))
+    except np.linalg.LinAlgError:
+        inv_B = np.linalg.pinv(B_reg)
+        D2_joint = float(np.trace(inv_B @ quad_spatial))
+
+    d_spat_shape = float(np.sqrt(max(D2_joint, 0.0) / (3.0 * T)))
+    return d_spat_shape, rmse_3d_um
+
+
 def extract_joint_trajectory_ribbon(
     cell_name: str,
     joint_model: dict,
@@ -224,5 +306,7 @@ def extract_joint_trajectory_ribbon(
         tau_cutoff=float(tau_cutoff),
         mu_warp_min=float(mu_warp_min),
         std_warp_min=float(std_warp_min),
+        length_scale=float(joint_model.get("length_scale", 0.3)),
+        noise_level=float(joint_model.get("noise_level", 0.1)),
     )
 

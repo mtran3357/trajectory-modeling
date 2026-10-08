@@ -107,3 +107,16 @@ def test_end_to_end_pipeline():
         assert "dt0_test" in qc_row
         print(f"  [OK] Successfully scored {len(cell_scores_df)} blastomere tracks.")
         print(f"  [OK] Query embryo scale={qc_row['scale_s']:.3f}, pacing Ke={qc_row['k_test']:.3f}.")
+
+        # STAGE 2 (Full Joint GP): Run inference with shape_metric_mode="full_joint_gp"
+        cell_scores_joint_df, _ = run_embryo_inference(
+            query_pos_df=query_df,
+            lineage_df=lineage_df,
+            atlas_bundle=loaded_atlas,
+            alpha=0.05,
+            min_observations=3,
+            shape_metric_mode="full_joint_gp",
+        )
+        assert not cell_scores_joint_df.empty
+        assert (cell_scores_joint_df["d_spat_shape"] >= 0.0).all()
+        print(f"  [OK] Successfully scored {len(cell_scores_joint_df)} tracks with shape_metric_mode='full_joint_gp'.")
