@@ -26,6 +26,7 @@ def run_embryo_inference(
     n_jobs: int = 1,
     shape_metric_mode: str = "pointwise_marginal",
     warping_lambda: float | None = None,
+    dt_min: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Executes spatiotemporal inference for query embryos against pre-fit WT atlas.
     
@@ -49,6 +50,9 @@ def run_embryo_inference(
         Trajectory shape metric calculation mode.
     warping_lambda : float or None, default=None
         Time-warping regularization parameter (if None, reads from bundle, default 1.0).
+    dt_min : float or None, default=None
+        Temporal frame sampling interval in physical minutes (e.g. 1.25 for 75s).
+        If None, reads from bundle or defaults to 1.0 min.
         
     Returns
     -------
@@ -66,6 +70,7 @@ def run_embryo_inference(
     aligned_cols = bundle["aligned_cols"]
     raw_spatial_cols = bundle["raw_spatial_cols"]
     voxel_size_xyz = bundle["voxel_size_xyz"]
+    dt_min = float(dt_min if dt_min is not None else bundle.get("dt_min", 1.0))
     spatial_template = bundle["spatial_template"]
     temporal_atlas = bundle["temporal_atlas"]
     cell_models = bundle["cell_models"]
@@ -83,13 +88,17 @@ def run_embryo_inference(
     if shape_metric_mode == "pointwise_marginal" and "shape_metric_mode" in bundle:
         shape_metric_mode = bundle["shape_metric_mode"]
 
-    # 1. Scale physical coordinates
+
+    # 1. Scale physical coordinates and time
     df = query_pos_df.copy()
     df[embryo_col] = df[embryo_col].astype(str)
     df[cell_col] = df[cell_col].astype(str).str.strip()
 
     for raw_c, mic_c, scale in zip(raw_spatial_cols, micron_cols, voxel_size_xyz):
         df[mic_c] = df[raw_c].astype(float) * scale
+
+    if dt_min != 1.0:
+        df[time_col] = df[time_col].astype(float) * dt_min
 
     parent_map = parse_lineage_graph(lineage_df)
     pooled_log_stds = [v["std_log"] for v in temporal_atlas.values() if v["std_log"] > 0]
@@ -239,7 +248,7 @@ def run_embryo_inference(
                 lambda_reg=warping_lambda,
                 slope_bounds=warping_slope_bounds,
             )
-            active_tau_test = tau_grid[tau_grid <= tau_test.max() + 1e-4]
+            active_tau_test = tau_grid[:len(gamma_test)]
             warp_met = compute_warp_metrics(gamma_test, active_tau_test, slopes_test)
             max_warp_min = warp_met["max_warp_min"]
             signed_warp_area = warp_met["signed_warp_area"]

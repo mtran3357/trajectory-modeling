@@ -149,10 +149,17 @@ def compute_warp_metrics(
     gamma_opt = np.asarray(gamma_opt, dtype=float)
     tau_act = np.asarray(tau_act, dtype=float)
     
+    min_len = min(len(gamma_opt), len(tau_act))
+    if len(gamma_opt) != min_len or len(tau_act) != min_len:
+        gamma_opt = gamma_opt[:min_len]
+        tau_act = tau_act[:min_len]
+        if slopes_opt is not None and len(slopes_opt) > max(min_len - 1, 0):
+            slopes_opt = slopes_opt[:max(min_len - 1, 0)]
+            
     diff = gamma_opt - tau_act
-    rms_warp_min = float(np.sqrt(np.mean(diff ** 2)))
-    max_warp_min = float(np.max(np.abs(diff)))
-    signed_warp_area = float(np.trapezoid(diff, tau_act)) if len(tau_act) > 1 else 0.0
+    rms_warp_min = float(np.sqrt(np.mean(diff ** 2))) if min_len > 0 else 0.0
+    max_warp_min = float(np.max(np.abs(diff))) if min_len > 0 else 0.0
+    signed_warp_area = float(np.trapezoid(diff, tau_act)) if min_len > 1 else 0.0
 
     if slopes_opt is None:
         delta_tau = np.diff(tau_act)

@@ -10,6 +10,7 @@ class ColumnConfig:
     micron_cols: tuple[str, str, str] = ("x_um", "y_um", "z_um")
     aligned_cols: tuple[str, str, str] = ("x_aligned_um", "y_aligned_um", "z_aligned_um")
     voxel_size_xyz: tuple[float, float, float] = (0.09, 0.09, 1.0)
+    dt_min: float = 1.0
     time_col: str = "time"
     embryo_col: str = "series"
     cell_col: str = "cell"
