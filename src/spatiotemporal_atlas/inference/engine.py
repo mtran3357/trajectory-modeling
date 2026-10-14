@@ -248,7 +248,7 @@ def run_embryo_inference(
                 lambda_reg=warping_lambda,
                 slope_bounds=warping_slope_bounds,
             )
-            active_tau_test = tau_grid[tau_grid <= tau_test.max() + 1e-4]
+            active_tau_test = tau_grid[:len(gamma_test)]
             warp_met = compute_warp_metrics(gamma_test, active_tau_test, slopes_test)
             max_warp_min = warp_met["max_warp_min"]
             signed_warp_area = warp_met["signed_warp_area"]
